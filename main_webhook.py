@@ -1,15 +1,5 @@
 """
-Entrypoint — webhook mode (recommended for production on Render Web Service).
-
-Advantages over polling:
-  - Telegram pushes updates instantly (no long-poll delay)
-  - Render's health checks work (HTTP port is bound)
-  - Lower resource usage
-
-Setup:
-  1. Deploy as a Render "Web Service" (not Background Worker)
-  2. Set env vars: WEBHOOK_BASE_URL=https://your-app.onrender.com
-  3. Set Start Command: python main_webhook.py
+Entrypoint — webhook mode for Render Web Service.
 """
 from __future__ import annotations
 
@@ -33,23 +23,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(bot: Bot) -> None:
+async def on_startup(app: web.Application) -> None:
+    bot: Bot = app["bot"]
     await init_cache()
     webhook_url = settings.webhook_base_url.rstrip("/") + settings.webhook_path
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
     logger.info("Webhook set → %s", webhook_url)
 
 
-async def on_shutdown(bot: Bot) -> None:
+async def on_shutdown(app: web.Application) -> None:
+    bot: Bot = app["bot"]
     await close_cache()
     await bot.delete_webhook()
-    logger.info("Webhook removed, cache closed.")
+    await bot.session.close()
+    logger.info("Bot shutdown complete.")
 
 
 def build_app() -> web.Application:
     settings.validate()
     if not settings.webhook_base_url:
-        raise RuntimeError("WEBHOOK_BASE_URL must be set when running main_webhook.py")
+        raise RuntimeError("WEBHOOK_BASE_URL must be set")
 
     bot = Bot(
         token=settings.bot_token,
@@ -59,14 +52,17 @@ def build_app() -> web.Application:
     dp.message.middleware(FloodControlMiddleware(min_interval=1.5))
     dp.include_router(router)
 
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
     app = web.Application()
+    app["bot"] = bot
+
+    # Register aiohttp lifecycle hooks (not aiogram dp hooks)
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=settings.webhook_path)
     setup_application(app, dp, bot=bot)
 
-    # Health check — required for Render Web Service port detection
+    # Health check endpoint
     async def health(_: web.Request) -> web.Response:
         return web.Response(text="ok")
 
