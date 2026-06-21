@@ -130,6 +130,20 @@ itirmiş olarsan.
 
 İki seçim var: **polling** (tövsiyə olunur, sadədir) və **webhook**.
 
+> ⚠️ **Vacib:** Render-in default Python versiyası çox yeni ola bilər (məs.
+> 3.14), bu da `pydantic-core` kimi C/Rust əsaslı paketlərin build xətası ilə
+> uğursuz olmasına səbəb olur (mənbədən compile etməyə çalışır, Render-in
+> read-only fayl sistemi buna icazə vermir). Bunun qarşısını almaq üçün repo-da
+> `.python-version` faylı `3.11.9` ilə əlavə olunub. Əgər Render Dashboard-dan
+> **manual** (blueprint olmadan) Web Service/Background Worker yaradırsansa,
+> Environment bölməsinə əlavə olaraq bunu da əlavə et:
+>
+> ```
+> PYTHON_VERSION=3.11.9
+> ```
+>
+> `render.yaml` blueprint-i istifadə etsən, bu artıq avtomatik təyin olunub.
+
 ### A) Polling — Background Worker (tövsiyə olunur)
 
 Polling-də bot Telegram-a özü qoşulub davamlı sorğu göndərir, ona görə açıq
