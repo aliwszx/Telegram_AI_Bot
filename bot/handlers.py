@@ -119,7 +119,9 @@ async def handle_ai_chat(message: Message) -> None:
     history = await asyncio.to_thread(db.get_recent_messages, user.id)
 
     try:
-        reply_text = await asyncio.to_thread(generate_reply, history, user_text)
+        reply_text = await asyncio.to_thread(
+            generate_reply, history, user_text, user.language_code
+        )
     except GeminiError:
         logger.exception("Gemini call failed for user %s", user.id)
         await message.answer(
