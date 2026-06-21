@@ -40,3 +40,5 @@ services:
         sync: false
       - key: WEBHOOK_PATH
         value: /webhook
+      - key: REDIS_URL
+        sync: false
