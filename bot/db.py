@@ -15,6 +15,7 @@ from typing import Literal
 from supabase import create_client, Client
 
 from bot.config import settings
+from bot.retry import with_retry
 
 Plan = Literal["free", "premium"]
 
@@ -31,6 +32,7 @@ def today() -> str:
 
 # ── Users ──────────────────────────────────────────────────────────────────
 
+@with_retry()
 def get_or_create_user(user_id: int, username: str | None, first_name: str | None) -> dict:
     existing = _client.table("users").select("*").eq("id", user_id).execute()
     if existing.data:
@@ -52,6 +54,7 @@ def get_or_create_user(user_id: int, username: str | None, first_name: str | Non
     return result.data[0]
 
 
+@with_retry()
 def get_user(user_id: int) -> dict | None:
     result = _client.table("users").select("*").eq("id", user_id).execute()
     return result.data[0] if result.data else None
@@ -70,6 +73,7 @@ def _parse_dt(value: str | None) -> dt.datetime | None:
         return None
 
 
+@with_retry()
 def effective_plan(user: dict) -> Plan:
     plan: Plan = user.get("plan", "free")
     if plan != "premium":
@@ -85,6 +89,7 @@ def effective_plan(user: dict) -> Plan:
     return "premium"
 
 
+@with_retry()
 def activate_premium(user_id: int, days: int) -> dt.datetime:
     until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
     _client.table("users").update(
@@ -93,6 +98,7 @@ def activate_premium(user_id: int, days: int) -> dt.datetime:
     return until
 
 
+@with_retry()
 def set_plan(user_id: int, plan: Plan) -> None:
     _client.table("users").update(
         {"plan": plan, "premium_until": None}
@@ -101,6 +107,7 @@ def set_plan(user_id: int, plan: Plan) -> None:
 
 # ── Chat mode ──────────────────────────────────────────────────────────────
 
+@with_retry()
 def set_chat_mode(user_id: int, mode: str) -> None:
     _client.table("users").update({"chat_mode": mode}).eq("id", user_id).execute()
 
@@ -118,6 +125,7 @@ def check_usage_and_get_history(user_id: int) -> dict:
     return _check_usage_fallback(user_id)
 
 
+@with_retry()
 def _check_usage_fallback(user_id: int) -> dict:
     """3-query fallback used when the RPC is not yet deployed."""
     user = get_user(user_id)
@@ -156,12 +164,14 @@ def _check_usage_fallback(user_id: int) -> dict:
 
 # ── Messages ───────────────────────────────────────────────────────────────
 
+@with_retry()
 def save_message(user_id: int, role: Literal["user", "assistant"], content: str) -> None:
     _client.table("messages").insert(
         {"user_id": user_id, "role": role, "content": content}
     ).execute()
 
 
+@with_retry()
 def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
     limit = limit or settings.history_limit
     result = (
@@ -175,6 +185,7 @@ def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
     return list(reversed(result.data))
 
 
+@with_retry()
 def clear_history(user_id: int) -> int:
     result = _client.table("messages").delete().eq("user_id", user_id).execute()
     return len(result.data) if result.data else 0
@@ -182,6 +193,7 @@ def clear_history(user_id: int) -> int:
 
 # ── Admin ──────────────────────────────────────────────────────────────────
 
+@with_retry()
 def get_stats() -> dict:
     today = _today()
     total        = _client.table("users").select("id", count="exact").execute()
@@ -198,6 +210,7 @@ def get_stats() -> dict:
     }
 
 
+@with_retry()
 def search_user(query: str) -> dict | None:
     query = query.strip().lstrip("@")
     if query.isdigit():
@@ -207,6 +220,7 @@ def search_user(query: str) -> dict | None:
     return r.data[0] if r.data else None
 
 
+@with_retry()
 def get_all_user_ids() -> list[int]:
     result = _client.table("users").select("id").execute()
     return [row["id"] for row in result.data]

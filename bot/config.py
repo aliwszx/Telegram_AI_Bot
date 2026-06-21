@@ -72,6 +72,16 @@ class Settings:
     webhook_path: str = os.getenv("WEBHOOK_PATH", "/webhook")
     port: int = field(default_factory=lambda: _get_int("PORT", 10000))
 
+    # Sentry (optional) — error tracking. Leave SENTRY_DSN empty to disable.
+    sentry_dsn: str = os.getenv("SENTRY_DSN", "")
+    sentry_environment: str = os.getenv("SENTRY_ENVIRONMENT", "production")
+
+    # Streaming replies — "edits" the message as Gemini generates it.
+    # Set STREAMING_ENABLED=false to fall back to single-shot replies.
+    streaming_enabled: bool = field(
+        default_factory=lambda: os.getenv("STREAMING_ENABLED", "true").lower() not in ("false", "0", "no")
+    )
+
     def validate(self) -> None:
         missing = [
             name

@@ -100,6 +100,18 @@ Bot indi polling rejimində işləyəcək — Telegram-da botuna `/start` yaz.
 | `FREE_DAILY_LIMIT` | Free user üçün günlük mesaj limiti | `20` |
 | `PREMIUM_DAILY_LIMIT` | Premium user üçün günlük limit | `300` |
 | `ADMIN_IDS` | `/grant` komandasını işlədə bilən Telegram ID-lər, vergüllə ayrılmış | boş |
+| `SENTRY_DSN` | Sentry layihənin DSN-i — xətaları (Gemini timeout, Supabase fail və s.) real-time görmək üçün. Boş saxlasan Sentry tamamilə deaktiv olur | boş |
+| `SENTRY_ENVIRONMENT` | Sentry-də görünən environment adı | `production` |
+| `STREAMING_ENABLED` | Gemini cavabını hissə-hissə (streaming) göstərsin, yoxsa bir dəfəyə | `true` |
+| `PORT` | Health-check (`/`) endpoint-inin portu — polling rejimində belə işə düşür, UptimeRobot / Better Stack üçün | `10000` |
+
+### Yeni xüsusiyyətlər (qısa)
+
+- **Sentry**: `SENTRY_DSN` təyin etsən, Gemini və Supabase xətaları avtomatik Sentry-yə göndərilir (`bot/sentry.py`). DSN yoxdursa heç nə dəyişmir.
+- **Health-check**: `/` endpoint-i həm webhook, həm də **polling** rejimində ayağa qalxır (polling-də ayrıca yüngül aiohttp server background-da işləyir). UptimeRobot bunu `https://sənin-domenin/` ünvanına 5 dəqiqədə bir ping edə bilər. Port açıla bilməyəndə (məs. Render Background Worker-də) bot yenə də normal işləyir, sadəcə health server keçilir.
+- **Retry + exponential backoff**: Gemini və Supabase çağırışlarında şəbəkə qırılması/timeout kimi keçici xətalarda avtomatik 2 dəfə təkrar cəhd edilir (artan gözləmə ilə). Rate-limit xətaları isə birbaşa növbəti fallback modelə keçir (təkrar cəhd etmir, vaxt itirmir).
+- **Graceful rate-limit mesajı**: Bütün modellər eyni anda rate-limit-ə düşsə, istifadəçiyə ümumi "xəta baş verdi" əvəzinə "⏳ N saniyə sonra yenidən cəhd et" göstərilir (mümkün olduqda Gemini-nin verdiyi real gözləmə vaxtı oxunur).
+- **Streaming cavablar**: Gemini-nin cavabı hissə-hissə gəldikcə mesaj Telegram-da `edit_message_text` ilə canlı yenilənir (Telegram-ın flood limitlərinə düşməmək üçün throttling var). `STREAMING_ENABLED=false` ilə söndürüb köhnə "bir dəfəyə cavab" davranışına qayıda bilərsən.
 
 ## 5. Monetizasiya — Telegram Stars ilə premium
 

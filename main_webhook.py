@@ -15,6 +15,7 @@ from bot.cache import init_cache, close_cache
 from bot.config import settings
 from bot.handlers import router
 from bot.middlewares import FloodControlMiddleware
+from bot.sentry import init_sentry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +45,7 @@ async def on_shutdown(app: web.Application) -> None:
 
 def build_app() -> web.Application:
     settings.validate()
+    init_sentry()
     if not settings.webhook_base_url:
         raise RuntimeError("WEBHOOK_BASE_URL must be set")
 

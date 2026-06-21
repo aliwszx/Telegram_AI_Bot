@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue as queue_module
+import threading
+import time
 
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -19,11 +23,25 @@ from aiogram.types import (
 )
 
 from bot import db
-from bot.ai import generate_reply, GeminiError, MODE_NAMES
+from bot.ai import generate_reply, generate_reply_stream, GeminiError, GeminiRateLimitError, MODE_NAMES
 from bot.config import settings
+
+try:
+    import sentry_sdk
+except ImportError:  # sentry-sdk not installed — capture calls below become no-ops
+    sentry_sdk = None
 
 logger = logging.getLogger(__name__)
 router = Router(name="main")
+
+
+def _capture(exc: Exception) -> None:
+    """Send an exception to Sentry if it's configured; always a safe no-op otherwise."""
+    if sentry_sdk is not None:
+        try:
+            sentry_sdk.capture_exception(exc)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Static texts ───────────────────────────────────────────────────────────
@@ -262,6 +280,11 @@ async def cmd_clear(message: Message) -> None:
         "Yeni söhbətə başlaya bilərsən!"
     )
 
+
+@router.message(Command("grant"))
+async def cmd_grant(message: Message, command: CommandObject) -> None:
+    if not _is_admin(message.from_user.id):
+        return
 
     if not command.args:
         await message.answer("İstifadə: /grant <user_id> <free|premium>")
@@ -571,6 +594,101 @@ async def cb_admin_clear(callback: CallbackQuery) -> None:
     count = await asyncio.to_thread(db.clear_history, uid)
     await callback.answer(f"🗑 {count} mesaj silindi", show_alert=True)
 
+# ── Streaming bridge ─────────────────────────────────────────────────────
+# generate_reply_stream() is a blocking generator (it calls the Gemini SDK
+# synchronously). We run it in a background thread and forward chunks to the
+# event loop through a plain queue.Queue, so the message can be edited
+# "as it's being written" without blocking the bot.
+
+_EDIT_MIN_INTERVAL = 0.9   # seconds between Telegram message edits (avoid flood limits)
+_EDIT_MIN_CHARS = 25       # minimum new characters before we bother editing
+
+
+async def _stream_ai_reply(
+    message: Message,
+    history: list[dict],
+    user_text: str,
+    language_hint: str | None,
+    mode: str,
+    image_bytes: bytes | None,
+    image_mime: str,
+) -> tuple[str, str]:
+    """
+    Streams the Gemini reply into a single Telegram message, editing it
+    progressively. Returns (full_text, model_used).
+    """
+    q: queue_module.Queue = queue_module.Queue()
+
+    def producer() -> None:
+        try:
+            for piece, model, done in generate_reply_stream(
+                history, user_text, language_hint, mode, image_bytes, image_mime
+            ):
+                q.put(("chunk", piece, model, done))
+        except Exception as exc:  # noqa: BLE001
+            q.put(("error", exc, None, None))
+        finally:
+            q.put(("end", None, None, None))
+
+    threading.Thread(target=producer, daemon=True).start()
+
+    loop = asyncio.get_running_loop()
+    full_text = ""
+    model_used = ""
+    sent_message: Message | None = None
+    last_edit_len = 0
+    last_edit_time = 0.0
+
+    while True:
+        kind, piece, model, done = await loop.run_in_executor(None, q.get)
+
+        if kind == "end":
+            break
+        if kind == "error":
+            raise piece  # the exception object
+
+        if model:
+            model_used = model
+        if piece:
+            full_text += piece
+
+        if done:
+            continue
+
+        now = time.monotonic()
+        should_edit = (
+            full_text
+            and (len(full_text) - last_edit_len >= _EDIT_MIN_CHARS)
+            and (now - last_edit_time >= _EDIT_MIN_INTERVAL)
+        )
+
+        if sent_message is None and full_text:
+            sent_message = await message.answer(full_text)
+            last_edit_len = len(full_text)
+            last_edit_time = now
+        elif sent_message is not None and should_edit:
+            try:
+                await sent_message.edit_text(full_text)
+                last_edit_len = len(full_text)
+                last_edit_time = now
+            except TelegramBadRequest:
+                pass  # "message is not modified" or similar — harmless, skip
+
+    full_text = full_text.strip()
+    if not full_text:
+        raise GeminiError("Empty response from Gemini")
+
+    if sent_message is None:
+        sent_message = await message.answer(full_text)
+    elif full_text != getattr(sent_message, "text", None):
+        try:
+            await sent_message.edit_text(full_text)
+        except TelegramBadRequest:
+            pass
+
+    return full_text, model_used
+
+
 # ── Core AI handler (shared logic for text + photo) ────────────────────────
 
 async def _handle_ai_message(
@@ -586,6 +704,7 @@ async def _handle_ai_message(
         ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
     except Exception as exc:
         logger.exception("DB error for user %s: %s", user.id, exc)
+        _capture(exc)
         await message.answer("😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.")
         return
 
@@ -606,17 +725,32 @@ async def _handle_ai_message(
     remaining = max(limit - usage, 0)
 
     try:
-        reply_text, model_used = await asyncio.to_thread(
-            generate_reply,
-            history,
-            user_text,
-            user.language_code,
-            mode,
-            image_bytes,
-            image_mime,
+        if settings.streaming_enabled:
+            reply_text, model_used = await _stream_ai_reply(
+                message, history, user_text, user.language_code, mode, image_bytes, image_mime,
+            )
+        else:
+            reply_text, model_used = await asyncio.to_thread(
+                generate_reply,
+                history,
+                user_text,
+                user.language_code,
+                mode,
+                image_bytes,
+                image_mime,
+            )
+    except GeminiRateLimitError as exc:
+        logger.warning("Gemini rate-limited for user %s: %s", user.id, exc)
+        _capture(exc)
+        await message.answer(
+            "⏳ AI hazırda həddən artıq yüklənib (limit doldu).\n"
+            f"Zəhmət olmasa <b>{exc.retry_after} saniyə</b> sonra yenidən cəhd et.",
+            parse_mode="HTML",
         )
+        return
     except GeminiError as exc:
         logger.exception("Gemini error for user %s: %s", user.id, exc)
+        _capture(exc)
         await message.answer(
             "😕 Hazırda AI cavab verə bilmədi, bir az sonra yenidən cəhd et."
         )
@@ -630,8 +764,6 @@ async def _handle_ai_message(
 
     from bot import cache as redis_cache
     await redis_cache.invalidate_user(user.id)
-
-    await message.answer(reply_text)
 
     if remaining <= 3:
         await message.answer(f"ℹ️ Bugün üçün qalan limit: {remaining}/{limit}")
