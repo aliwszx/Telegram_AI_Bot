@@ -60,6 +60,48 @@ def get_daily_limit(plan: Plan) -> int:
     return settings.premium_daily_limit if plan == "premium" else settings.free_daily_limit
 
 
+def _parse_dt(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def effective_plan(user: dict) -> Plan:
+    """
+    Returns the user's real current plan, automatically treating an expired
+    premium subscription (premium_until in the past) as 'free'. If expiry is
+    detected, the DB row is downgraded so future reads are consistent.
+    """
+    plan: Plan = user.get("plan", "free")
+    if plan != "premium":
+        return "free"
+
+    until = _parse_dt(user.get("premium_until"))
+    if until is None:
+        return "premium"  # no expiry set -> treat as a permanent/manual grant
+
+    if until < dt.datetime.now(dt.timezone.utc):
+        _client.table("users").update(
+            {"plan": "free", "premium_until": None}
+        ).eq("id", user["id"]).execute()
+        return "free"
+
+    return "premium"
+
+
+def activate_premium(user_id: int, days: int) -> dt.datetime:
+    """Called after a confirmed payment (e.g. Telegram Stars). Sets plan to
+    'premium' for `days` days from now and returns the new expiry datetime."""
+    until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+    _client.table("users").update(
+        {"plan": "premium", "premium_until": until.isoformat()}
+    ).eq("id", user_id).execute()
+    return until
+
+
 def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
     """
     Atomically (best-effort) checks the user's daily usage against their plan
@@ -73,7 +115,7 @@ def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
         # Should not happen if get_or_create_user was called first, but be safe.
         user = get_or_create_user(user_id, None, None)
 
-    plan: Plan = user.get("plan", "free")
+    plan = effective_plan(user)
     limit = get_daily_limit(plan)
 
     today = _today()
@@ -97,7 +139,11 @@ def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
 
 
 def set_plan(user_id: int, plan: Plan) -> None:
-    _client.table("users").update({"plan": plan}).eq("id", user_id).execute()
+    """Manual admin override (/grant). Clears premium_until so a manual
+    'premium' grant doesn't expire on its own (treated as permanent)."""
+    _client.table("users").update(
+        {"plan": plan, "premium_until": None}
+    ).eq("id", user_id).execute()
 
 
 def save_message(user_id: int, role: Literal["user", "assistant"], content: str) -> None:
