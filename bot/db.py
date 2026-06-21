@@ -1,10 +1,7 @@
 """
-Database access layer.
+Database access layer — Supabase.
 
-All Supabase calls are synchronous (supabase-py v2 uses httpx under the hood
-but exposes a blocking API), so every function here is wrapped with
-asyncio.to_thread when called from async handlers. Keep that wrapping in
-handlers.py / call sites, not here, so this module stays simple and testable.
+All functions are synchronous; wrap with asyncio.to_thread() in handlers.
 """
 from __future__ import annotations
 
@@ -25,15 +22,14 @@ def _today() -> str:
 
 
 def today() -> str:
-    """Public helper, e.g. for comparing last_usage_date in handlers."""
     return _today()
 
 
+# ── Users ──────────────────────────────────────────────────────────────────
+
 def get_or_create_user(user_id: int, username: str | None, first_name: str | None) -> dict:
-    """Return the user row, creating it with default 'free' plan if missing."""
     existing = _client.table("users").select("*").eq("id", user_id).execute()
     if existing.data:
-        # Keep username/first_name fresh in case they changed
         _client.table("users").update(
             {"username": username, "first_name": first_name}
         ).eq("id", user_id).execute()
@@ -46,6 +42,7 @@ def get_or_create_user(user_id: int, username: str | None, first_name: str | Non
         "plan": "free",
         "daily_usage": 0,
         "last_usage_date": _today(),
+        "chat_mode": "default",
     }
     result = _client.table("users").insert(new_row).execute()
     return result.data[0]
@@ -70,18 +67,13 @@ def _parse_dt(value: str | None) -> dt.datetime | None:
 
 
 def effective_plan(user: dict) -> Plan:
-    """
-    Returns the user's real current plan, automatically treating an expired
-    premium subscription (premium_until in the past) as 'free'. If expiry is
-    detected, the DB row is downgraded so future reads are consistent.
-    """
     plan: Plan = user.get("plan", "free")
     if plan != "premium":
         return "free"
 
     until = _parse_dt(user.get("premium_until"))
     if until is None:
-        return "premium"  # no expiry set -> treat as a permanent/manual grant
+        return "premium"
 
     if until < dt.datetime.now(dt.timezone.utc):
         _client.table("users").update(
@@ -93,8 +85,6 @@ def effective_plan(user: dict) -> Plan:
 
 
 def activate_premium(user_id: int, days: int) -> dt.datetime:
-    """Called after a confirmed payment (e.g. Telegram Stars). Sets plan to
-    'premium' for `days` days from now and returns the new expiry datetime."""
     until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
     _client.table("users").update(
         {"plan": "premium", "premium_until": until.isoformat()}
@@ -102,17 +92,29 @@ def activate_premium(user_id: int, days: int) -> dt.datetime:
     return until
 
 
-def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
-    """
-    Atomically (best-effort) checks the user's daily usage against their plan
-    limit, resetting the counter if the day has rolled over, and increments
-    usage if allowed.
+def set_plan(user_id: int, plan: Plan) -> None:
+    _client.table("users").update(
+        {"plan": plan, "premium_until": None}
+    ).eq("id", user_id).execute()
 
-    Returns: (allowed, remaining_after_this_message, limit)
-    """
+
+# ── Chat mode ──────────────────────────────────────────────────────────────
+
+def set_chat_mode(user_id: int, mode: str) -> None:
+    """Save the user's selected chat mode (default/teacher/coder/friend/translator)."""
+    _client.table("users").update({"chat_mode": mode}).eq("id", user_id).execute()
+
+
+def get_chat_mode(user: dict) -> str:
+    """Return user's current mode, defaulting to 'default'."""
+    return user.get("chat_mode") or "default"
+
+
+# ── Usage ──────────────────────────────────────────────────────────────────
+
+def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
     user = get_user(user_id)
     if user is None:
-        # Should not happen if get_or_create_user was called first, but be safe.
         user = get_or_create_user(user_id, None, None)
 
     plan = effective_plan(user)
@@ -121,10 +123,9 @@ def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
     today = _today()
     usage = user.get("daily_usage", 0)
     if user.get("last_usage_date") != today:
-        usage = 0  # new day, reset
+        usage = 0
 
     if usage >= limit:
-        # Persist the reset even if we deny, so the date stays current
         _client.table("users").update(
             {"daily_usage": usage, "last_usage_date": today}
         ).eq("id", user_id).execute()
@@ -138,13 +139,7 @@ def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
     return True, max(limit - usage, 0), limit
 
 
-def set_plan(user_id: int, plan: Plan) -> None:
-    """Manual admin override (/grant). Clears premium_until so a manual
-    'premium' grant doesn't expire on its own (treated as permanent)."""
-    _client.table("users").update(
-        {"plan": plan, "premium_until": None}
-    ).eq("id", user_id).execute()
-
+# ── Messages ───────────────────────────────────────────────────────────────
 
 def save_message(user_id: int, role: Literal["user", "assistant"], content: str) -> None:
     _client.table("messages").insert(
@@ -153,7 +148,6 @@ def save_message(user_id: int, role: Literal["user", "assistant"], content: str)
 
 
 def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
-    """Return the last N messages for a user in chronological (oldest-first) order."""
     limit = limit or settings.history_limit
     result = (
         _client.table("messages")
@@ -164,3 +158,9 @@ def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
         .execute()
     )
     return list(reversed(result.data))
+
+
+def clear_history(user_id: int) -> int:
+    """Delete all messages for a user. Returns count of deleted rows."""
+    result = _client.table("messages").delete().eq("user_id", user_id).execute()
+    return len(result.data) if result.data else 0

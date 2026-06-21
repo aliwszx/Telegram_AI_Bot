@@ -1,6 +1,10 @@
 """
-All Telegram update handlers live here: /start, /help, /status, /grant
-(admin) and the catch-all text handler that drives the AI chat.
+All Telegram update handlers:
+  /start, /help, /status, /upgrade, /grant  — existing
+  /mode                                       — NEW: select AI persona
+  /clear                                      — NEW: clear chat history
+  photo handler                               — NEW: image analysis
+  text handler                                — updated to pass mode + image
 """
 from __future__ import annotations
 
@@ -9,35 +13,56 @@ import logging
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    LabeledPrice, Message, PreCheckoutQuery, CallbackQuery,
+)
 
 from bot import db
-from bot.ai import generate_reply, GeminiError
+from bot.ai import generate_reply, GeminiError, MODE_NAMES
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
 router = Router(name="main")
 
 
+# ── Static texts ───────────────────────────────────────────────────────────
+
 WELCOME_TEXT = (
     "👋 Salam! Mən AI chat botam (Gemini ilə işləyirəm).\n\n"
-    "Mənə istənilən sualını yaz, cavab verim. Söhbət tarixçəni yadda saxlayıram, "
-    "ona görə kontekstli davam edə bilərsən.\n\n"
+    "Mənə istənilən sualını yaz və ya <b>şəkil göndər</b> — analiz edim.\n\n"
     "Komandalar:\n"
     "/start — botu başlat\n"
     "/help — kömək\n"
     "/status — planın və günlük limitin\n"
+    "/mode — AI rejimini seç (müəllim, proqramçı, dost...)\n"
+    "/clear — söhbət tarixçəsini sil\n"
     "/upgrade — Telegram Stars ilə premiuma keç\n"
 )
 
 HELP_TEXT = (
-    "ℹ️ İstifadə qaydası:\n"
-    "Sadəcə mesaj yaz, AI cavab verəcək.\n\n"
-    "/status — plan (free/premium) və günlük limitin neçə qalıb\n"
-    "/upgrade — Telegram Stars ilə premiuma keç (limitin artır)\n"
-    "/start — yenidən başlatma mesajı\n"
+    "ℹ️ İstifadə qaydası:\n\n"
+    "• Mətn yaz → AI cavab verər\n"
+    "• <b>Şəkil göndər</b> → AI şəkili analiz edər\n"
+    "• Şəkilə başlıq yaz → o sual üzrə analiz edər\n\n"
+    "/mode — AI rejimini dəyiş\n"
+    "/status — plan və limit\n"
+    "/clear — söhbəti sıfırla\n"
+    "/upgrade — premium al\n"
 )
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _mode_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=label, callback_data=f"mode:{key}")]
+        for key, label in MODE_NAMES.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ── Commands ───────────────────────────────────────────────────────────────
 
 @router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
@@ -45,12 +70,12 @@ async def cmd_start(message: Message) -> None:
     await asyncio.to_thread(
         db.get_or_create_user, user.id, user.username, user.first_name
     )
-    await message.answer(WELCOME_TEXT)
+    await message.answer(WELCOME_TEXT, parse_mode="HTML")
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT)
+    await message.answer(HELP_TEXT, parse_mode="HTML")
 
 
 @router.message(Command("status"))
@@ -64,26 +89,68 @@ async def cmd_status(message: Message) -> None:
     usage = row.get("daily_usage", 0)
     used_today = usage if row.get("last_usage_date") == db.today() else 0
     remaining = max(limit - used_today, 0)
+    mode = db.get_chat_mode(row)
 
     lines = [
         f"📊 Plan: <b>{plan}</b>",
+        f"🎭 Rejim: <b>{MODE_NAMES.get(mode, mode)}</b>",
         f"Bugünkü istifadə: {used_today}/{limit}",
         f"Qalan limit: {remaining}",
     ]
     if plan == "premium" and row.get("premium_until"):
         lines.append(f"Premium bitmə tarixi: {row['premium_until'][:10]}")
     elif plan == "free":
-        lines.append(f"\n⭐ Premium almaq üçün: /upgrade")
+        lines.append("\n⭐ Premium almaq üçün: /upgrade")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
+@router.message(Command("mode"))
+async def cmd_mode(message: Message) -> None:
+    row = await asyncio.to_thread(
+        db.get_or_create_user,
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name,
+    )
+    current = db.get_chat_mode(row)
+    await message.answer(
+        f"🎭 Hazırki rejim: <b>{MODE_NAMES.get(current, current)}</b>\n\n"
+        "Aşağıdan yeni rejim seç:",
+        reply_markup=_mode_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("mode:"))
+async def cb_mode_select(callback: CallbackQuery) -> None:
+    mode = callback.data.split(":", 1)[1]
+    if mode not in MODE_NAMES:
+        await callback.answer("Yanlış rejim.", show_alert=True)
+        return
+
+    await asyncio.to_thread(db.set_chat_mode, callback.from_user.id, mode)
+    await callback.message.edit_text(
+        f"✅ Rejim dəyişdirildi: <b>{MODE_NAMES[mode]}</b>\n\n"
+        "İndi mənə yaz!",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(Command("clear"))
+async def cmd_clear(message: Message) -> None:
+    count = await asyncio.to_thread(db.clear_history, message.from_user.id)
+    await message.answer(
+        f"🗑️ Söhbət tarixçəsi silindi ({count} mesaj).\n"
+        "Yeni söhbətə başlaya bilərsən!"
+    )
+
+
 @router.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject) -> None:
-    """Admin-only: /grant <user_id> <free|premium> — upgrade/downgrade a user.
-    Useful as the hook point for a future payment webhook (Stripe/Click/Payme)."""
     if message.from_user.id not in settings.admin_ids:
-        return  # silently ignore for non-admins
+        return
 
     if not command.args:
         await message.answer("İstifadə: /grant <user_id> <free|premium>")
@@ -101,9 +168,6 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
 
 @router.message(Command("upgrade"))
 async def cmd_upgrade(message: Message) -> None:
-    """Sends a Telegram Stars invoice to upgrade to premium.
-    Stars (currency 'XTR') need no payment provider/bank setup — Telegram
-    handles the payment itself, and it works in every country."""
     row = await asyncio.to_thread(
         db.get_or_create_user,
         message.from_user.id,
@@ -128,14 +192,12 @@ async def cmd_upgrade(message: Message) -> None:
         payload=f"premium_upgrade:{message.from_user.id}",
         currency="XTR",
         prices=[LabeledPrice(label="Premium", amount=settings.stars_price)],
-        provider_token="",  # not needed for Telegram Stars
+        provider_token="",
     )
 
 
 @router.pre_checkout_query()
 async def handle_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
-    # Always approve here unless you need to re-validate stock/price; the
-    # actual upgrade happens only after successful_payment below.
     await pre_checkout_query.answer(ok=True)
 
 
@@ -151,14 +213,17 @@ async def handle_successful_payment(message: Message) -> None:
     )
 
 
-@router.message(F.text & ~F.text.startswith("/"))
-async def handle_ai_chat(message: Message) -> None:
-    user = message.from_user
-    user_text = message.text.strip()
-    if not user_text:
-        return
+# ── Core AI handler (shared logic for text + photo) ────────────────────────
 
-    await asyncio.to_thread(
+async def _handle_ai_message(
+    message: Message,
+    user_text: str,
+    image_bytes: bytes | None = None,
+    image_mime: str = "image/jpeg",
+) -> None:
+    user = message.from_user
+
+    row = await asyncio.to_thread(
         db.get_or_create_user, user.id, user.username, user.first_name
     )
 
@@ -169,17 +234,24 @@ async def handle_ai_chat(message: Message) -> None:
         await message.answer(
             "⛔ Bugünkü mesaj limitin bitdi "
             f"({limit}/{limit}). Limit sabah sıfırlanacaq, "
-            "ya da premium plana keçərək limiti artıra bilərsən."
+            "ya da /upgrade ilə premium ala bilərsən."
         )
         return
 
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     history = await asyncio.to_thread(db.get_recent_messages, user.id)
+    mode = db.get_chat_mode(row)
 
     try:
-        reply_text = await asyncio.to_thread(
-            generate_reply, history, user_text, user.language_code
+        reply_text, model_used = await asyncio.to_thread(
+            generate_reply,
+            history,
+            user_text,
+            user.language_code,
+            mode,
+            image_bytes,
+            image_mime,
         )
     except GeminiError:
         logger.exception("Gemini call failed for user %s", user.id)
@@ -188,9 +260,41 @@ async def handle_ai_chat(message: Message) -> None:
         )
         return
 
-    await asyncio.to_thread(db.save_message, user.id, "user", user_text)
+    # Save text representation to history (not the image bytes)
+    history_text = f"[Şəkil] {user_text}" if image_bytes else user_text
+    await asyncio.to_thread(db.save_message, user.id, "user", history_text)
     await asyncio.to_thread(db.save_message, user.id, "assistant", reply_text)
 
     await message.answer(reply_text)
+
     if remaining <= 3:
         await message.answer(f"ℹ️ Bugün üçün qalan limit: {remaining}/{limit}")
+
+
+# ── Text messages ──────────────────────────────────────────────────────────
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_ai_chat(message: Message) -> None:
+    user_text = message.text.strip()
+    if not user_text:
+        return
+    await _handle_ai_message(message, user_text)
+
+
+# ── Photo messages ─────────────────────────────────────────────────────────
+
+@router.message(F.photo)
+async def handle_photo(message: Message) -> None:
+    # Telegram sends multiple sizes — take the largest
+    photo = message.photo[-1]
+    caption = (message.caption or "").strip()
+    prompt = caption if caption else "Bu şəkildə nə görürsən? Ətraflı izah et."
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    # Download photo as bytes
+    file = await message.bot.get_file(photo.file_id)
+    downloaded = await message.bot.download_file(file.file_path)
+    image_bytes = downloaded.read()
+
+    await _handle_ai_message(message, prompt, image_bytes=image_bytes, image_mime="image/jpeg")
