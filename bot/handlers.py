@@ -581,25 +581,24 @@ async def _handle_ai_message(
 ) -> None:
     user = message.from_user
 
-    row = await asyncio.to_thread(
-        db.get_or_create_user, user.id, user.username, user.first_name
-    )
+    # ── Single RPC: check usage + get history + get mode in one DB round-trip
+    ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
 
-    allowed, remaining, limit = await asyncio.to_thread(
-        db.check_and_increment_usage, user.id
-    )
-    if not allowed:
+    if not ctx["allowed"]:
+        limit = ctx["limit"]
         await message.answer(
-            "⛔ Bugünkü mesaj limitin bitdi "
-            f"({limit}/{limit}). Limit sabah sıfırlanacaq, "
-            "ya da /upgrade ilə premium ala bilərsən."
+            f"⛔ Bugünkü mesaj limitin bitdi ({limit}/{limit}).\n"
+            "Limit sabah sıfırlanacaq, ya da /upgrade ilə premium ala bilərsən."
         )
         return
 
     await message.bot.send_chat_action(message.chat.id, "typing")
 
-    history = await asyncio.to_thread(db.get_recent_messages, user.id)
-    mode = db.get_chat_mode(row)
+    history  = ctx["history"]
+    mode     = ctx.get("chat_mode") or "default"
+    usage    = ctx["usage"]
+    limit    = ctx["limit"]
+    remaining = max(limit - usage, 0)
 
     try:
         reply_text, model_used = await asyncio.to_thread(
@@ -618,10 +617,16 @@ async def _handle_ai_message(
         )
         return
 
-    # Save text representation to history (not the image bytes)
+    # Save to history (fire-and-forget style — both inserts in parallel)
     history_text = f"[Şəkil] {user_text}" if image_bytes else user_text
-    await asyncio.to_thread(db.save_message, user.id, "user", history_text)
-    await asyncio.to_thread(db.save_message, user.id, "assistant", reply_text)
+    await asyncio.gather(
+        asyncio.to_thread(db.save_message, user.id, "user", history_text),
+        asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
+    )
+
+    # Invalidate Redis cache so next /status reflects updated usage
+    from bot import cache as redis_cache
+    await redis_cache.invalidate_user(user.id)
 
     await message.answer(reply_text)
 

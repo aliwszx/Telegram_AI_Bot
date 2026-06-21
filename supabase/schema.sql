@@ -1,5 +1,5 @@
 -- ============================================================
--- Telegram AI Bot — Supabase schema (v2)
+-- Telegram AI Bot — Supabase schema (v3)
 -- Run this in: Supabase Dashboard → SQL Editor → New query → Run
 -- ============================================================
 
@@ -17,12 +17,11 @@ create table if not exists users (
     daily_usage     integer not null default 0,
     last_usage_date date not null default current_date,
     premium_until   timestamptz,
-    chat_mode       text not null default 'default',   -- NEW: AI persona
+    chat_mode       text not null default 'default',
     created_at      timestamptz not null default now()
 );
 
--- Add chat_mode to existing deployments (safe to run on existing DB)
-alter table users add column if not exists chat_mode text not null default 'default';
+alter table users add column if not exists chat_mode     text not null default 'default';
 alter table users add column if not exists premium_until timestamptz;
 
 -- ---------------------------------------------------------------
@@ -40,7 +39,82 @@ create index if not exists idx_messages_user_created
     on messages (user_id, created_at desc);
 
 -- ---------------------------------------------------------------
+-- RPC: check_usage_and_get_history
+-- Single call instead of 3 separate queries per message
+-- ---------------------------------------------------------------
+create or replace function check_usage_and_get_history(
+    p_user_id    bigint,
+    p_free_limit  integer,
+    p_prem_limit  integer,
+    p_hist_limit  integer
+)
+returns json
+language plpgsql
+as $$
+declare
+    v_user       users%rowtype;
+    v_plan       text;
+    v_limit      integer;
+    v_today      date := current_date;
+    v_usage      integer;
+    v_allowed    boolean;
+    v_history    json;
+begin
+    -- Lock row for update to prevent race conditions
+    select * into v_user from users where id = p_user_id for update;
+
+    if not found then
+        raise exception 'user_not_found';
+    end if;
+
+    -- Check premium expiry
+    v_plan := v_user.plan;
+    if v_plan = 'premium' and v_user.premium_until is not null
+       and v_user.premium_until < now() then
+        v_plan := 'free';
+        update users set plan = 'free', premium_until = null where id = p_user_id;
+    end if;
+
+    v_limit := case when v_plan = 'premium' then p_prem_limit else p_free_limit end;
+
+    -- Reset daily counter if needed
+    v_usage := case when v_user.last_usage_date = v_today then v_user.daily_usage else 0 end;
+
+    if v_usage >= v_limit then
+        v_allowed := false;
+    else
+        v_allowed := true;
+        v_usage := v_usage + 1;
+        update users
+           set daily_usage     = v_usage,
+               last_usage_date = v_today
+         where id = p_user_id;
+    end if;
+
+    -- Fetch recent history
+    select json_agg(m order by m.created_at asc)
+      into v_history
+      from (
+          select role, content, created_at
+            from messages
+           where user_id = p_user_id
+           order by created_at desc
+           limit p_hist_limit
+      ) m;
+
+    return json_build_object(
+        'allowed',   v_allowed,
+        'usage',     v_usage,
+        'limit',     v_limit,
+        'plan',      v_plan,
+        'chat_mode', v_user.chat_mode,
+        'history',   coalesce(v_history, '[]'::json)
+    );
+end;
+$$;
+
+-- ---------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------
-alter table users enable row level security;
+alter table users    enable row level security;
 alter table messages enable row level security;

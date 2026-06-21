@@ -1,6 +1,10 @@
 """
 Database access layer — Supabase.
 
+Key optimisation: the hot path (every AI message) uses a single
+PostgreSQL RPC call (check_usage_and_get_history) instead of 3
+separate round-trips.
+
 All functions are synchronous; wrap with asyncio.to_thread() in handlers.
 """
 from __future__ import annotations
@@ -70,17 +74,14 @@ def effective_plan(user: dict) -> Plan:
     plan: Plan = user.get("plan", "free")
     if plan != "premium":
         return "free"
-
     until = _parse_dt(user.get("premium_until"))
     if until is None:
         return "premium"
-
     if until < dt.datetime.now(dt.timezone.utc):
         _client.table("users").update(
             {"plan": "free", "premium_until": None}
         ).eq("id", user["id"]).execute()
         return "free"
-
     return "premium"
 
 
@@ -101,25 +102,66 @@ def set_plan(user_id: int, plan: Plan) -> None:
 # ── Chat mode ──────────────────────────────────────────────────────────────
 
 def set_chat_mode(user_id: int, mode: str) -> None:
-    """Save the user's selected chat mode (default/teacher/coder/friend/translator)."""
     _client.table("users").update({"chat_mode": mode}).eq("id", user_id).execute()
 
 
 def get_chat_mode(user: dict) -> str:
-    """Return user's current mode, defaulting to 'default'."""
     return user.get("chat_mode") or "default"
 
 
-# ── Usage ──────────────────────────────────────────────────────────────────
+# ── Hot path: single RPC call ──────────────────────────────────────────────
 
-def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
+def check_usage_and_get_history(user_id: int) -> dict:
+    """
+    Single PostgreSQL RPC replaces 3 separate queries:
+      1. get_user (to check plan & usage)
+      2. increment daily_usage
+      3. get_recent_messages
+
+    Returns dict with keys:
+      allowed   bool
+      usage     int
+      limit     int
+      plan      str
+      chat_mode str
+      history   list[dict]  — [{role, content, created_at}, ...]
+    """
+    try:
+        result = _client.rpc(
+            "check_usage_and_get_history",
+            {
+                "p_user_id":    user_id,
+                "p_free_limit": settings.free_daily_limit,
+                "p_prem_limit": settings.premium_daily_limit,
+                "p_hist_limit": settings.history_limit,
+            },
+        ).execute()
+        data = result.data
+        if isinstance(data, list):
+            data = data[0]
+        history = data.get("history") or []
+        if isinstance(history, str):
+            import json
+            history = json.loads(history)
+        data["history"] = list(reversed(history)) if history else []
+        return data
+    except Exception as exc:
+        # RPC not yet deployed → fallback to 3-query path
+        import logging
+        logging.getLogger(__name__).warning(
+            "RPC check_usage_and_get_history failed (%s), using fallback", exc
+        )
+        return _check_usage_fallback(user_id)
+
+
+def _check_usage_fallback(user_id: int) -> dict:
+    """3-query fallback used when the RPC is not yet deployed."""
     user = get_user(user_id)
     if user is None:
         user = get_or_create_user(user_id, None, None)
 
     plan = effective_plan(user)
     limit = get_daily_limit(plan)
-
     today = _today()
     usage = user.get("daily_usage", 0)
     if user.get("last_usage_date") != today:
@@ -129,14 +171,23 @@ def check_and_increment_usage(user_id: int) -> tuple[bool, int, int]:
         _client.table("users").update(
             {"daily_usage": usage, "last_usage_date": today}
         ).eq("id", user_id).execute()
-        return False, 0, limit
+        allowed = False
+    else:
+        usage += 1
+        _client.table("users").update(
+            {"daily_usage": usage, "last_usage_date": today}
+        ).eq("id", user_id).execute()
+        allowed = True
 
-    usage += 1
-    _client.table("users").update(
-        {"daily_usage": usage, "last_usage_date": today}
-    ).eq("id", user_id).execute()
-
-    return True, max(limit - usage, 0), limit
+    history = get_recent_messages(user_id)
+    return {
+        "allowed":   allowed,
+        "usage":     usage,
+        "limit":     limit,
+        "plan":      plan,
+        "chat_mode": get_chat_mode(user),
+        "history":   history,
+    }
 
 
 # ── Messages ───────────────────────────────────────────────────────────────
@@ -161,7 +212,6 @@ def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
 
 
 def clear_history(user_id: int) -> int:
-    """Delete all messages for a user. Returns count of deleted rows."""
     result = _client.table("messages").delete().eq("user_id", user_id).execute()
     return len(result.data) if result.data else 0
 
@@ -169,25 +219,12 @@ def clear_history(user_id: int) -> int:
 # ── Admin ──────────────────────────────────────────────────────────────────
 
 def get_stats() -> dict:
-    """Return key bot statistics for the admin panel."""
     today = _today()
-
-    total = _client.table("users").select("id", count="exact").execute()
-    premium = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
-    active_today = (
-        _client.table("users")
-        .select("id", count="exact")
-        .eq("last_usage_date", today)
-        .execute()
-    )
-    msgs_today = (
-        _client.table("messages")
-        .select("id", count="exact")
-        .gte("created_at", f"{today}T00:00:00")
-        .execute()
-    )
-    total_msgs = _client.table("messages").select("id", count="exact").execute()
-
+    total        = _client.table("users").select("id", count="exact").execute()
+    premium      = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
+    active_today = _client.table("users").select("id", count="exact").eq("last_usage_date", today).execute()
+    msgs_today   = _client.table("messages").select("id", count="exact").gte("created_at", f"{today}T00:00:00").execute()
+    total_msgs   = _client.table("messages").select("id", count="exact").execute()
     return {
         "total_users":    total.count or 0,
         "premium_users":  premium.count or 0,
@@ -198,7 +235,6 @@ def get_stats() -> dict:
 
 
 def search_user(query: str) -> dict | None:
-    """Find a user by numeric ID or @username."""
     query = query.strip().lstrip("@")
     if query.isdigit():
         r = _client.table("users").select("*").eq("id", int(query)).execute()
@@ -208,6 +244,5 @@ def search_user(query: str) -> dict | None:
 
 
 def get_all_user_ids() -> list[int]:
-    """Return all user IDs (for broadcast)."""
     result = _client.table("users").select("id").execute()
     return [row["id"] for row in result.data]
