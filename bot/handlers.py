@@ -29,37 +29,63 @@ router = Router(name="main")
 # ── Static texts ───────────────────────────────────────────────────────────
 
 WELCOME_TEXT = (
-    "👋 Salam! Mən AI chat botam (Gemini ilə işləyirəm).\n\n"
-    "Mənə istənilən sualını yaz və ya <b>şəkil göndər</b> — analiz edim.\n\n"
-    "Komandalar:\n"
-    "/start — botu başlat\n"
-    "/help — kömək\n"
-    "/status — planın və günlük limitin\n"
-    "/mode — AI rejimini seç (müəllim, proqramçı, dost...)\n"
-    "/clear — söhbət tarixçəsini sil\n"
-    "/upgrade — Telegram Stars ilə premiuma keç\n"
+    "👋 <b>Salam, {name}!</b>\n\n"
+    "Mən Gemini AI ilə işləyən smart bir botam.\n"
+    "Sualını yaz, şəkil göndər, rejim seç — hər şey burada! 🚀\n\n"
+    "Aşağıdakı düymələrdən başla 👇"
 )
 
 HELP_TEXT = (
-    "ℹ️ İstifadə qaydası:\n\n"
-    "• Mətn yaz → AI cavab verər\n"
-    "• <b>Şəkil göndər</b> → AI şəkili analiz edər\n"
-    "• Şəkilə başlıq yaz → o sual üzrə analiz edər\n\n"
+    "ℹ️ <b>İstifadə qaydası</b>\n\n"
+    "💬 <b>Mətn yaz</b> → AI cavab verir\n"
+    "🖼 <b>Şəkil göndər</b> → AI şəkili analiz edir\n"
+    "📝 <b>Şəkilə başlıq yaz</b> → həmin sual üzrə analiz\n\n"
+    "<b>Komandalar:</b>\n"
     "/mode — AI rejimini dəyiş\n"
-    "/status — plan və limit\n"
-    "/clear — söhbəti sıfırla\n"
-    "/upgrade — premium al\n"
+    "/status — plan və gündəlik limit\n"
+    "/clear — söhbət tarixçəsini sil\n"
+    "/upgrade — ⭐ Premium al\n"
 )
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── Keyboards ──────────────────────────────────────────────────────────────
 
-def _mode_keyboard() -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=label, callback_data=f"mode:{key}")]
-        for key, label in MODE_NAMES.items()
-    ]
+def _start_keyboard() -> InlineKeyboardMarkup:
+    """Ana menyu — /start-da göstərilir."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎭 Rejim seç", callback_data="menu:mode"),
+            InlineKeyboardButton(text="📊 Status",    callback_data="menu:status"),
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Söhbəti sil", callback_data="menu:clear"),
+            InlineKeyboardButton(text="⭐ Premium",      callback_data="menu:upgrade"),
+        ],
+        [
+            InlineKeyboardButton(text="ℹ️ Kömək", callback_data="menu:help"),
+        ],
+    ])
+
+
+def _mode_keyboard(current: str | None = None) -> InlineKeyboardMarkup:
+    """Rejim seçmə klaviaturası — aktiv olanın yanında ✓ işarəsi."""
+    buttons = []
+    for key, label in MODE_NAMES.items():
+        tick = " ✓" if key == current else ""
+        buttons.append(
+            [InlineKeyboardButton(text=f"{label}{tick}", callback_data=f"mode:{key}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton(text="⬅️ Geri", callback_data="menu:back")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _back_keyboard() -> InlineKeyboardMarkup:
+    """Sadə 'Geri' düyməsi olan klaviatura."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Əsas menyu", callback_data="menu:back")]
+    ])
 
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -70,12 +96,17 @@ async def cmd_start(message: Message) -> None:
     await asyncio.to_thread(
         db.get_or_create_user, user.id, user.username, user.first_name
     )
-    await message.answer(WELCOME_TEXT, parse_mode="HTML")
+    name = user.first_name or user.username or "Qonaq"
+    await message.answer(
+        WELCOME_TEXT.format(name=name),
+        reply_markup=_start_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, parse_mode="HTML")
+    await message.answer(HELP_TEXT, reply_markup=_back_keyboard(), parse_mode="HTML")
 
 
 @router.message(Command("status"))
@@ -117,7 +148,7 @@ async def cmd_mode(message: Message) -> None:
     await message.answer(
         f"🎭 Hazırki rejim: <b>{MODE_NAMES.get(current, current)}</b>\n\n"
         "Aşağıdan yeni rejim seç:",
-        reply_markup=_mode_keyboard(),
+        reply_markup=_mode_keyboard(current),
         parse_mode="HTML",
     )
 
@@ -130,13 +161,98 @@ async def cb_mode_select(callback: CallbackQuery) -> None:
         return
 
     await asyncio.to_thread(db.set_chat_mode, callback.from_user.id, mode)
+    name = callback.from_user.first_name or callback.from_user.username or "Qonaq"
     await callback.message.edit_text(
         f"✅ Rejim dəyişdirildi: <b>{MODE_NAMES[mode]}</b>\n\n"
-        "İndi mənə yaz!",
+        "İndi mənə yaz! 👇",
+        reply_markup=_start_keyboard(),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await callback.answer(f"{MODE_NAMES[mode]} seçildi!")
 
+
+
+
+@router.callback_query(F.data.startswith("menu:"))
+async def cb_menu(callback: CallbackQuery) -> None:
+    action = callback.data.split(":", 1)[1]
+    user = callback.from_user
+
+    if action == "back":
+        name = user.first_name or user.username or "Qonaq"
+        await callback.message.edit_text(
+            WELCOME_TEXT.format(name=name),
+            reply_markup=_start_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    elif action == "mode":
+        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        current = db.get_chat_mode(row)
+        await callback.message.edit_text(
+            f"🎭 Hazırki rejim: <b>{MODE_NAMES.get(current, current)}</b>\n\n"
+            "Yeni rejim seç:",
+            reply_markup=_mode_keyboard(current),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    elif action == "status":
+        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        plan = await asyncio.to_thread(db.effective_plan, row)
+        limit = db.get_daily_limit(plan)
+        usage = row.get("daily_usage", 0)
+        used_today = usage if row.get("last_usage_date") == db.today() else 0
+        remaining = max(limit - used_today, 0)
+        mode = db.get_chat_mode(row)
+        plan_emoji = "⭐" if plan == "premium" else "🆓"
+        lines = [
+            f"{plan_emoji} Plan: <b>{plan.upper()}</b>",
+            f"🎭 Rejim: <b>{MODE_NAMES.get(mode, mode)}</b>",
+            f"📨 Bugün: {used_today}/{limit} mesaj",
+            f"✅ Qalan: {remaining} mesaj",
+        ]
+        if plan == "premium" and row.get("premium_until"):
+            lines.append(f"📅 Bitmə tarixi: {row['premium_until'][:10]}")
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=_back_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    elif action == "clear":
+        count = await asyncio.to_thread(db.clear_history, user.id)
+        name = user.first_name or user.username or "Qonaq"
+        await callback.message.edit_text(
+            f"🗑 Söhbət silindi ({count} mesaj).\n\nYeni söhbətə başla! 👇",
+            reply_markup=_start_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer("Söhbət silindi!")
+
+    elif action == "upgrade":
+        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        plan = await asyncio.to_thread(db.effective_plan, row)
+        if plan == "premium":
+            await callback.answer("Artıq premium istifadəçisisən! ⭐", show_alert=True)
+            return
+        await callback.answer()
+        await callback.message.answer_invoice(
+            title="Premium plan ⭐",
+            description=(
+                f"{settings.premium_duration_days} gün premium — "
+                f"günlük {settings.premium_daily_limit} mesaj limiti."
+            ),
+            payload=f"premium_upgrade:{user.id}",
+            currency="XTR",
+            prices=[LabeledPrice(label="Premium", amount=settings.stars_price)],
+            provider_token="",
+        )
+
+    else:
+        await callback.answer()
 
 @router.message(Command("clear"))
 async def cmd_clear(message: Message) -> None:
