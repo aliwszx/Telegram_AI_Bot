@@ -101,16 +101,36 @@ Bot indi polling rejimində işləyəcək — Telegram-da botuna `/start` yaz.
 | `PREMIUM_DAILY_LIMIT` | Premium user üçün günlük limit | `300` |
 | `ADMIN_IDS` | `/grant` komandasını işlədə bilən Telegram ID-lər, vergüllə ayrılmış | boş |
 
-## 5. Monetizasiya hazırlığı
+## 5. Monetizasiya — Telegram Stars ilə premium
 
-- `users.plan` sütunu `free`/`premium` saxlayır.
-- `users.daily_usage` + `last_usage_date` ilə gündəlik limit izlənir
-  (`bot/db.py` → `check_and_increment_usage`).
-- `/grant <user_id> <free|premium>` admin komandası planı dəyişir — gələcəkdə
-  ödəniş webhook-u (Stripe, Click, Payme və s.) bu funksiyanı (`db.set_plan`)
-  çağıraraq avtomatik upgrade edə bilər.
-- Premium üçün limiti artırmaq, ya da limitsiz etmək sadəcə
-  `PREMIUM_DAILY_LIMIT` dəyərini dəyişməklə mümkündür.
+İstifadəçi `/upgrade` yazanda bot Telegram Stars (`XTR`) invoice-u göndərir.
+Stars üçün bank/kart provayderi, müqavilə, KYC və s. lazım deyil — Telegram
+özü ödənişi idarə edir və hər ölkədə (Azərbaycan daxil) işləyir.
+
+**Necə işləyir:**
+1. `/upgrade` → bot `send_invoice(currency="XTR", ...)` göndərir.
+2. İstifadəçi Telegram-da Stars ilə ödəyir (Stars-ı yoxdursa, Telegram ona
+   almaq imkanı göstərir).
+3. Telegram `pre_checkout_query` göndərir → bot avtomatik təsdiqləyir.
+4. Ödəniş uğurlu olanda `successful_payment` mesajı gəlir → bot
+   `db.activate_premium()` çağırır, istifadəçinin planı `premium` olur,
+   `premium_until = indi + PREMIUM_DURATION_DAYS` təyin olunur.
+5. `premium_until` keçəndə bot avtomatik olaraq istifadəçini yenidən `free`
+   plana qaytarır (`bot/db.py` → `effective_plan()`), heç bir cron lazım deyil.
+
+**Qiyməti dəyişmək:** `.env`-də `STARS_PRICE` (Stars sayı) və
+`PREMIUM_DURATION_DAYS` (neçə gün davam etsin) dəyərlərini dəyiş, Render-də
+Manual Deploy et.
+
+**Qeyd:** Stars-dan Telegram öz komissiyasını çıxır, qalanını sənə ödəyir
+(real pulla çıxarmaq üçün BotFather → Stars balansı → Withdraw). Əgər real
+bank kartı ilə ödəniş (Stripe, Click, Payme) istəsən, bu da `send_invoice`-a
+fərqli `provider_token` və `currency` verməklə əlavə oluna bilər — sonra
+quraşdırmaq istəsən mənə de.
+
+**Admin əl ilə təyinat:** `/grant <user_id> <free|premium>` hələ də qalır —
+manual qrant `premium_until`-ı `null` saxlayır, ona görə avtomatik bitmir
+(yalnız sən özün `/grant ... free` ilə geri qaytara bilərsən).
 
 ## 5.1. Dil problemi (məs. "salam" yazanda Özbəkcə cavab gəlir)
 
