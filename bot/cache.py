@@ -31,8 +31,9 @@ async def init_cache() -> None:
         return
     try:
         import redis.asyncio as aioredis  # type: ignore[import]
-        _redis = aioredis.from_url(url, decode_responses=True, socket_timeout=2)
-        await _redis.ping()
+        client = aioredis.from_url(url, decode_responses=True, socket_timeout=2)
+        await client.ping()
+        _redis = client
         logger.info("Redis connected: %s", url.split("@")[-1])
     except Exception as exc:  # noqa: BLE001
         logger.warning("Redis unavailable (%s) — falling back to no-cache mode", exc)

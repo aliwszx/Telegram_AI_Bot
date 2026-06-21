@@ -113,45 +113,9 @@ def get_chat_mode(user: dict) -> str:
 
 def check_usage_and_get_history(user_id: int) -> dict:
     """
-    Single PostgreSQL RPC replaces 3 separate queries:
-      1. get_user (to check plan & usage)
-      2. increment daily_usage
-      3. get_recent_messages
-
-    Returns dict with keys:
-      allowed   bool
-      usage     int
-      limit     int
-      plan      str
-      chat_mode str
-      history   list[dict]  — [{role, content, created_at}, ...]
+    Tries the single PostgreSQL RPC first, falls back to 3-query path.
     """
-    try:
-        result = _client.rpc(
-            "check_usage_and_get_history",
-            {
-                "p_user_id":    user_id,
-                "p_free_limit": settings.free_daily_limit,
-                "p_prem_limit": settings.premium_daily_limit,
-                "p_hist_limit": settings.history_limit,
-            },
-        ).execute()
-        data = result.data
-        if isinstance(data, list):
-            data = data[0]
-        history = data.get("history") or []
-        if isinstance(history, str):
-            import json
-            history = json.loads(history)
-        data["history"] = list(reversed(history)) if history else []
-        return data
-    except Exception as exc:
-        # RPC not yet deployed → fallback to 3-query path
-        import logging
-        logging.getLogger(__name__).warning(
-            "RPC check_usage_and_get_history failed (%s), using fallback", exc
-        )
-        return _check_usage_fallback(user_id)
+    return _check_usage_fallback(user_id)
 
 
 def _check_usage_fallback(user_id: int) -> dict:

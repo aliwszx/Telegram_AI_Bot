@@ -582,7 +582,12 @@ async def _handle_ai_message(
     user = message.from_user
 
     # ── Single RPC: check usage + get history + get mode in one DB round-trip
-    ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
+    try:
+        ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
+    except Exception as exc:
+        logger.exception("DB error for user %s: %s", user.id, exc)
+        await message.answer("😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.")
+        return
 
     if not ctx["allowed"]:
         limit = ctx["limit"]
@@ -610,21 +615,19 @@ async def _handle_ai_message(
             image_bytes,
             image_mime,
         )
-    except GeminiError:
-        logger.exception("Gemini call failed for user %s", user.id)
+    except GeminiError as exc:
+        logger.exception("Gemini error for user %s: %s", user.id, exc)
         await message.answer(
             "😕 Hazırda AI cavab verə bilmədi, bir az sonra yenidən cəhd et."
         )
         return
 
-    # Save to history (fire-and-forget style — both inserts in parallel)
     history_text = f"[Şəkil] {user_text}" if image_bytes else user_text
     await asyncio.gather(
         asyncio.to_thread(db.save_message, user.id, "user", history_text),
         asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
     )
 
-    # Invalidate Redis cache so next /status reflects updated usage
     from bot import cache as redis_cache
     await redis_cache.invalidate_user(user.id)
 
