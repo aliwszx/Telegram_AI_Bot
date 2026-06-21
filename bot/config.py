@@ -47,6 +47,10 @@ class Settings:
     free_daily_limit: int = field(default_factory=lambda: _get_int("FREE_DAILY_LIMIT", 20))
     premium_daily_limit: int = field(default_factory=lambda: _get_int("PREMIUM_DAILY_LIMIT", 300))
 
+    # Telegram Stars payment (currency code "XTR", no provider token needed)
+    stars_price: int = field(default_factory=lambda: _get_int("STARS_PRICE", 100))
+    premium_duration_days: int = field(default_factory=lambda: _get_int("PREMIUM_DURATION_DAYS", 30))
+
     # Admins
     admin_ids: list[int] = field(default_factory=lambda: _get_list("ADMIN_IDS"))
 
