@@ -30,6 +30,11 @@ class Settings:
     gemini_system_prompt: str = os.getenv(
         "GEMINI_SYSTEM_PROMPT",
         "You are a helpful, friendly AI assistant inside a Telegram bot. "
+        "Always reply in the same language the user used in their message. "
+        "If a message is too short or ambiguous to confidently detect the "
+        "language on its own (e.g. a one-word greeting that looks similar "
+        "across several Turkic languages like Azerbaijani, Uzbek, Turkish), "
+        "use the user's Telegram app language hint, if provided, to decide. "
         "Keep answers concise and clear.",
     )
 
