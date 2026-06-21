@@ -112,6 +112,21 @@ Bot indi polling rejimində işləyəcək — Telegram-da botuna `/start` yaz.
 - **Retry + exponential backoff**: Gemini və Supabase çağırışlarında şəbəkə qırılması/timeout kimi keçici xətalarda avtomatik 2 dəfə təkrar cəhd edilir (artan gözləmə ilə). Rate-limit xətaları isə birbaşa növbəti fallback modelə keçir (təkrar cəhd etmir, vaxt itirmir).
 - **Graceful rate-limit mesajı**: Bütün modellər eyni anda rate-limit-ə düşsə, istifadəçiyə ümumi "xəta baş verdi" əvəzinə "⏳ N saniyə sonra yenidən cəhd et" göstərilir (mümkün olduqda Gemini-nin verdiyi real gözləmə vaxtı oxunur).
 - **Streaming cavablar**: Gemini-nin cavabı hissə-hissə gəldikcə mesaj Telegram-da `edit_message_text` ilə canlı yenilənir (Telegram-ın flood limitlərinə düşməmək üçün throttling var). `STREAMING_ENABLED=false` ilə söndürüb köhnə "bir dəfəyə cavab" davranışına qayıda bilərsən.
+- **🌐 İnternet axtarışı (Google Search grounding)**: Bot Gemini-nin daxili `google_search` alətindən istifadə edir — yəni sual cavablandırarkən lazım olanda real-time internetdən məlumat çəkir (məs. son xəbərlər, hava, qiymətlər, yeni faktlar). `/search` komandası ilə hər istifadəçi özü üçün aç/bağla edə bilər (default: açıq).
+- **🎙 Səsli mesaj dəstəyi**: İstifadəçi səs yazısı göndərəndə bot onu Gemini-yə birbaşa audio kimi ötürür (ayrıca speech-to-text servisi lazım deyil) — Gemini səsi eşidir, mətnə çevirir və adi söhbət kimi cavab verir.
+- **📤 /export**: İstifadəçi bütün söhbət tarixçəsini `.txt` fayl şəklində yükləyə bilər (`/export` və ya əsas menyudakı "Export" düyməsi).
+- **🎁 Referral sistemi**: `/invite` komandası şəxsi dəvət linki yaradır (`https://t.me/BotAdı?start=ref_<user_id>`). Linklə yeni istifadəçi qoşulanda **hər iki tərəf +5 bonus mesaj** qazanır (gündəlik limitə əlavə olunur, sıfırlanmır). `users.referral_count` sütunu neçə adam dəvət etdiyini saxlayır.
+- **🔁 Yenidən cəhd et düyməsi**: Gemini xəta versə və ya rate-limit-ə düşsə, cavabın altında "🔁 Yenidən cəhd et" düyməsi çıxır — istifadəçi mesajı yenidən yazmadan birbaşa təkrar göndərə bilir.
+
+## 5.2. `/search` — internet axtarışını idarə etmək
+
+Default olaraq AI lazım gəldikdə (məs. "bu gün hava necədir", "son xəbərlər nədir")
+avtomatik internetdən məlumat axtarır və daha dəqiq, güncəl cavab verir
+(Gemini-nin `google_search` alətindən istifadə edərək). İstəsən `/search`
+yazaraq hər istifadəçi özü üçün bunu söndürə/aça bilər — söndürüləndə AI yalnız
+öz daxili bilik bazasına əsaslanır (bir az daha sürətli, amma köhnə məlumatla).
+
+
 
 ## 5. Monetizasiya — Telegram Stars ilə premium
 

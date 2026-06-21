@@ -18,6 +18,7 @@ from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
+    BufferedInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
     LabeledPrice, Message, PreCheckoutQuery, CallbackQuery,
 )
@@ -33,6 +34,17 @@ except ImportError:  # sentry-sdk not installed — capture calls below become n
 
 logger = logging.getLogger(__name__)
 router = Router(name="main")
+
+# In-memory cache of the last failed AI request per user, so the
+# "🔁 Yenidən cəhd et" (retry) button can resend it without the user
+# retyping. Lost on restart — harmless, button just won't do anything.
+_last_failed: dict[int, dict] = {}
+
+
+def _retry_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Yenidən cəhd et", callback_data="retry_last")]
+    ])
 
 
 def _capture(exc: Exception) -> None:
@@ -57,11 +69,15 @@ HELP_TEXT = (
     "ℹ️ <b>İstifadə qaydası</b>\n\n"
     "💬 <b>Mətn yaz</b> → AI cavab verir\n"
     "🖼 <b>Şəkil göndər</b> → AI şəkili analiz edir\n"
+    "🎙 <b>Səsli mesaj göndər</b> → AI eşidir və cavab yazır\n"
     "📝 <b>Şəkilə başlıq yaz</b> → həmin sual üzrə analiz\n\n"
     "<b>Komandalar:</b>\n"
     "/mode — AI rejimini dəyiş\n"
     "/status — plan və gündəlik limit\n"
     "/clear — söhbət tarixçəsini sil\n"
+    "/export — tarixçəni fayl kimi yüklə\n"
+    "/search — internet axtarışını aç/bağla\n"
+    "/invite — dost dəvət et, bonus mesaj qazan 🎁\n"
     "/upgrade — ⭐ Premium al\n"
 )
 
@@ -78,6 +94,10 @@ def _start_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🗑 Söhbəti sil", callback_data="menu:clear"),
             InlineKeyboardButton(text="⭐ Premium",      callback_data="menu:upgrade"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Dəvət et", callback_data="menu:invite"),
+            InlineKeyboardButton(text="📤 Export",   callback_data="menu:export"),
         ],
         [
             InlineKeyboardButton(text="ℹ️ Kömək", callback_data="menu:help"),
@@ -109,14 +129,29 @@ def _back_keyboard() -> InlineKeyboardMarkup:
 # ── Commands ───────────────────────────────────────────────────────────────
 
 @router.message(Command("start"))
-async def cmd_start(message: Message) -> None:
+async def cmd_start(message: Message, command: CommandObject) -> None:
     user = message.from_user
-    await asyncio.to_thread(
-        db.get_or_create_user, user.id, user.username, user.first_name
+
+    referred_by = None
+    if command.args and command.args.startswith("ref_"):
+        try:
+            ref_id = int(command.args.removeprefix("ref_"))
+            if ref_id != user.id:
+                referred_by = ref_id
+        except ValueError:
+            pass
+
+    row = await asyncio.to_thread(
+        db.get_or_create_user, user.id, user.username, user.first_name, referred_by
     )
     name = user.first_name or user.username or "Qonaq"
+
+    extra = ""
+    if referred_by and row.get("referred_by") == referred_by:
+        extra = "\n\n🎁 Dəvət linki ilə gəldin — sənə <b>+5 bonus mesaj</b> verildi!"
+
     await message.answer(
-        WELCOME_TEXT.format(name=name),
+        WELCOME_TEXT.format(name=name) + extra,
         reply_markup=_start_keyboard(),
         parse_mode="HTML",
     )
@@ -250,6 +285,14 @@ async def cb_menu(callback: CallbackQuery) -> None:
         )
         await callback.answer("Söhbət silindi!")
 
+    elif action == "invite":
+        await callback.answer()
+        await _send_invite(callback.message, user.id, user.username, user.first_name)
+
+    elif action == "export":
+        await callback.answer()
+        await _send_export(callback.message, user.id)
+
     elif action == "upgrade":
         row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
         plan = await asyncio.to_thread(db.effective_plan, row)
@@ -281,7 +324,66 @@ async def cmd_clear(message: Message) -> None:
     )
 
 
-@router.message(Command("grant"))
+@router.message(Command("invite"))
+async def cmd_invite(message: Message) -> None:
+    await _send_invite(message, message.from_user.id, message.from_user.username, message.from_user.first_name)
+
+
+async def _send_invite(target: Message, user_id: int, username, first_name) -> None:
+    row = await asyncio.to_thread(db.get_or_create_user, user_id, username, first_name)
+    bot_user = await target.bot.get_me()
+    link = f"https://t.me/{bot_user.username}?start=ref_{user_id}"
+    count = row.get("referral_count", 0)
+    await target.answer(
+        "🎁 <b>Dost dəvət et, bonus qazan!</b>\n\n"
+        f"Hər dəvət etdiyin dost botu açanda — <b>siz hər ikiniz +5 mesaj</b> "
+        "bonus qazanırsınız (gündəlik limitə əlavə olunur).\n\n"
+        f"🔗 Sənin linkin:\n<code>{link}</code>\n\n"
+        f"👥 İndiyə qədər dəvət etdiyin: <b>{count}</b> nəfər",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("export"))
+async def cmd_export(message: Message) -> None:
+    await _send_export(message, message.from_user.id)
+
+
+async def _send_export(target: Message, user_id: int) -> None:
+    messages = await asyncio.to_thread(db.get_all_messages, user_id)
+    if not messages:
+        await target.answer("📭 Hələ heç bir söhbət tarixçən yoxdur.")
+        return
+
+    lines = []
+    for m in messages:
+        who = "👤 Sən" if m["role"] == "user" else "🤖 AI"
+        lines.append(f"[{m.get('created_at', '')[:19]}] {who}:\n{m['content']}\n")
+    text = "\n".join(lines)
+
+    file = BufferedInputFile(text.encode("utf-8"), filename=f"chat_export_{user_id}.txt")
+    await target.answer_document(file, caption=f"📤 Söhbət tarixçən ({len(messages)} mesaj)")
+
+
+@router.message(Command("search"))
+async def cmd_search(message: Message) -> None:
+    row = await asyncio.to_thread(
+        db.get_or_create_user,
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name,
+    )
+    new_state = not db.get_web_search_enabled(row)
+    await asyncio.to_thread(db.set_web_search, message.from_user.id, new_state)
+    status = "✅ açıldı" if new_state else "❌ bağlandı"
+    await message.answer(
+        f"🌐 İnternet axtarışı {status}.\n\n"
+        "Açıq olanda AI lazım gəldikdə real-time internetdən "
+        "məlumat axtarıb daha dəqiq cavab verir."
+    )
+
+
+
 async def cmd_grant(message: Message, command: CommandObject) -> None:
     if not _is_admin(message.from_user.id):
         return
@@ -612,6 +714,7 @@ async def _stream_ai_reply(
     mode: str,
     image_bytes: bytes | None,
     image_mime: str,
+    web_search: bool = False,
 ) -> tuple[str, str]:
     """
     Streams the Gemini reply into a single Telegram message, editing it
@@ -622,7 +725,7 @@ async def _stream_ai_reply(
     def producer() -> None:
         try:
             for piece, model, done in generate_reply_stream(
-                history, user_text, language_hint, mode, image_bytes, image_mime
+                history, user_text, language_hint, mode, image_bytes, image_mime, web_search
             ):
                 q.put(("chunk", piece, model, done))
         except Exception as exc:  # noqa: BLE001
@@ -689,6 +792,26 @@ async def _stream_ai_reply(
     return full_text, model_used
 
 
+@router.callback_query(F.data == "retry_last")
+async def cb_retry_last(callback: CallbackQuery) -> None:
+    pending = _last_failed.pop(callback.from_user.id, None)
+    if not pending:
+        await callback.answer("⏰ Bu sorğunun vaxtı keçib, yenidən yaz.", show_alert=True)
+        return
+    await callback.answer("🔁 Yenidən cəhd edilir...")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await _handle_ai_message(
+        callback.message,
+        pending["text"],
+        image_bytes=pending.get("image_bytes"),
+        image_mime=pending.get("image_mime", "image/jpeg"),
+        target_user=callback.from_user,
+    )
+
+
 # ── Core AI handler (shared logic for text + photo) ────────────────────────
 
 async def _handle_ai_message(
@@ -696,8 +819,9 @@ async def _handle_ai_message(
     user_text: str,
     image_bytes: bytes | None = None,
     image_mime: str = "image/jpeg",
+    target_user=None,
 ) -> None:
-    user = message.from_user
+    user = target_user or message.from_user
 
     # ── Single RPC: check usage + get history + get mode in one DB round-trip
     try:
@@ -722,12 +846,14 @@ async def _handle_ai_message(
     mode     = ctx.get("chat_mode") or "default"
     usage    = ctx["usage"]
     limit    = ctx["limit"]
+    web_search = ctx.get("web_search", True)
     remaining = max(limit - usage, 0)
 
     try:
         if settings.streaming_enabled:
             reply_text, model_used = await _stream_ai_reply(
-                message, history, user_text, user.language_code, mode, image_bytes, image_mime,
+                message, history, user_text, user.language_code, mode,
+                image_bytes, image_mime, web_search,
             )
         else:
             reply_text, model_used = await asyncio.to_thread(
@@ -738,21 +864,30 @@ async def _handle_ai_message(
                 mode,
                 image_bytes,
                 image_mime,
+                web_search,
             )
     except GeminiRateLimitError as exc:
         logger.warning("Gemini rate-limited for user %s: %s", user.id, exc)
         _capture(exc)
+        _last_failed[user.id] = {
+            "text": user_text, "image_bytes": image_bytes, "image_mime": image_mime,
+        }
         await message.answer(
             "⏳ AI hazırda həddən artıq yüklənib (limit doldu).\n"
             f"Zəhmət olmasa <b>{exc.retry_after} saniyə</b> sonra yenidən cəhd et.",
             parse_mode="HTML",
+            reply_markup=_retry_keyboard(),
         )
         return
     except GeminiError as exc:
         logger.exception("Gemini error for user %s: %s", user.id, exc)
         _capture(exc)
+        _last_failed[user.id] = {
+            "text": user_text, "image_bytes": image_bytes, "image_mime": image_mime,
+        }
         await message.answer(
-            "😕 Hazırda AI cavab verə bilmədi, bir az sonra yenidən cəhd et."
+            "😕 Hazırda AI cavab verə bilmədi, bir az sonra yenidən cəhd et.",
+            reply_markup=_retry_keyboard(),
         )
         return
 
@@ -796,3 +931,29 @@ async def handle_photo(message: Message) -> None:
     image_bytes = downloaded.read()
 
     await _handle_ai_message(message, prompt, image_bytes=image_bytes, image_mime="image/jpeg")
+
+
+# ── Voice / audio messages ──────────────────────────────────────────────────
+
+@router.message(F.voice | F.audio)
+async def handle_voice(message: Message) -> None:
+    """
+    Gemini accepts audio natively as inline data — no separate
+    speech-to-text step needed. We just send the raw bytes + mime type
+    and let Gemini transcribe + answer in one go.
+    """
+    media = message.voice or message.audio
+    mime = getattr(media, "mime_type", None) or "audio/ogg"
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    file = await message.bot.get_file(media.file_id)
+    downloaded = await message.bot.download_file(file.file_path)
+    audio_bytes = downloaded.read()
+
+    prompt = (
+        "Bu səsli mesajı dinlə, dediklərini anla və adi söhbət kimi cavab ver. "
+        "Cavabının əvvəlində mətnə çevrilmiş halını qısaca yaz (məs: '🎙 Eşitdiyim: ...'), "
+        "sonra normal cavabını ver."
+    )
+    await _handle_ai_message(message, prompt, image_bytes=audio_bytes, image_mime=mime)

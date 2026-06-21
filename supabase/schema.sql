@@ -21,8 +21,12 @@ create table if not exists users (
     created_at      timestamptz not null default now()
 );
 
-alter table users add column if not exists chat_mode     text not null default 'default';
-alter table users add column if not exists premium_until timestamptz;
+alter table users add column if not exists chat_mode       text not null default 'default';
+alter table users add column if not exists premium_until   timestamptz;
+alter table users add column if not exists bonus_messages  integer not null default 0;
+alter table users add column if not exists referred_by     bigint;
+alter table users add column if not exists referral_count  integer not null default 0;
+alter table users add column if not exists web_search      boolean not null default true;
 
 -- ---------------------------------------------------------------
 -- messages
@@ -75,7 +79,8 @@ begin
         update users set plan = 'free', premium_until = null where id = p_user_id;
     end if;
 
-    v_limit := case when v_plan = 'premium' then p_prem_limit else p_free_limit end;
+    v_limit := case when v_plan = 'premium' then p_prem_limit else p_free_limit end
+               + coalesce(v_user.bonus_messages, 0);
 
     -- Reset daily counter if needed
     v_usage := case when v_user.last_usage_date = v_today then v_user.daily_usage else 0 end;

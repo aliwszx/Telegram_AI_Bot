@@ -124,7 +124,15 @@ def _build_system_prompt(
     return base
 
 
-def _parse_retry_after(exc: Exception, default: int = 30) -> int:
+def _build_config(system_instruction: str, web_search: bool) -> "types.GenerateContentConfig":
+    tools = [types.Tool(google_search=types.GoogleSearch())] if web_search else None
+    return types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=tools,
+    )
+
+
+
     """Try to pull a 'retry in N seconds' hint out of a Gemini error message."""
     match = re.search(r"retry[_-]?delay['\"]?\s*[:=]\s*['\"]?(\d+)", str(exc), re.IGNORECASE)
     if not match:
@@ -146,6 +154,7 @@ def generate_reply(
     mode: str = "default",
     image_bytes: bytes | None = None,
     image_mime: str = "image/jpeg",
+    web_search: bool = False,
 ) -> tuple[str, str]:
     """
     Call Gemini with automatic model fallback.
@@ -156,6 +165,7 @@ def generate_reply(
     """
     contents = _build_contents(history, new_message, image_bytes, image_mime)
     system_instruction = _build_system_prompt(mode, language_hint)
+    config = _build_config(system_instruction, web_search)
 
     last_error: Exception | None = None
     last_was_rate_limit = False
@@ -167,9 +177,7 @@ def generate_reply(
                 response = _client.models.generate_content(
                     model=model,
                     contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                    ),
+                    config=config,
                 )
                 text = (response.text or "").strip()
                 if not text:
@@ -225,6 +233,7 @@ def generate_reply_stream(
     mode: str = "default",
     image_bytes: bytes | None = None,
     image_mime: str = "image/jpeg",
+    web_search: bool = False,
 ):
     """
     Streaming version of generate_reply(). Yields (text_piece, model, is_done)
@@ -239,6 +248,7 @@ def generate_reply_stream(
     """
     contents = _build_contents(history, new_message, image_bytes, image_mime)
     system_instruction = _build_system_prompt(mode, language_hint)
+    config = _build_config(system_instruction, web_search)
 
     last_error: Exception | None = None
     last_was_rate_limit = False
@@ -252,9 +262,7 @@ def generate_reply_stream(
                 stream = _client.models.generate_content_stream(
                     model=model,
                     contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                    ),
+                    config=config,
                 )
                 for chunk in stream:
                     piece = getattr(chunk, "text", None) or ""

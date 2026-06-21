@@ -33,7 +33,12 @@ def today() -> str:
 # ── Users ──────────────────────────────────────────────────────────────────
 
 @with_retry()
-def get_or_create_user(user_id: int, username: str | None, first_name: str | None) -> dict:
+def get_or_create_user(
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+    referred_by: int | None = None,
+) -> dict:
     existing = _client.table("users").select("*").eq("id", user_id).execute()
     if existing.data:
         _client.table("users").update(
@@ -50,8 +55,37 @@ def get_or_create_user(user_id: int, username: str | None, first_name: str | Non
         "last_usage_date": _today(),
         "chat_mode": "default",
     }
+    if referred_by and referred_by != user_id:
+        # Make sure the referrer actually exists before crediting them.
+        ref_row = get_user(referred_by)
+        if ref_row is not None:
+            new_row["referred_by"] = referred_by
+
     result = _client.table("users").insert(new_row).execute()
-    return result.data[0]
+    created = result.data[0]
+
+    if new_row.get("referred_by"):
+        try:
+            add_bonus_messages(referred_by, 5)
+            add_bonus_messages(user_id, 5)
+            _client.table("users").update(
+                {"referral_count": (ref_row.get("referral_count", 0) or 0) + 1}
+            ).eq("id", referred_by).execute()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return created
+
+
+@with_retry()
+def add_bonus_messages(user_id: int, amount: int) -> None:
+    user = get_user(user_id)
+    if user is None:
+        return
+    current = user.get("bonus_messages", 0) or 0
+    _client.table("users").update(
+        {"bonus_messages": current + amount}
+    ).eq("id", user_id).execute()
 
 
 @with_retry()
@@ -60,8 +94,18 @@ def get_user(user_id: int) -> dict | None:
     return result.data[0] if result.data else None
 
 
-def get_daily_limit(plan: Plan) -> int:
-    return settings.premium_daily_limit if plan == "premium" else settings.free_daily_limit
+def get_daily_limit(plan: Plan, bonus: int = 0) -> int:
+    base = settings.premium_daily_limit if plan == "premium" else settings.free_daily_limit
+    return base + max(bonus, 0)
+
+
+def get_web_search_enabled(user: dict) -> bool:
+    return user.get("web_search", True)
+
+
+@with_retry()
+def set_web_search(user_id: int, enabled: bool) -> None:
+    _client.table("users").update({"web_search": enabled}).eq("id", user_id).execute()
 
 
 def _parse_dt(value: str | None) -> dt.datetime | None:
@@ -133,7 +177,8 @@ def _check_usage_fallback(user_id: int) -> dict:
         user = get_or_create_user(user_id, None, None)
 
     plan = effective_plan(user)
-    limit = get_daily_limit(plan)
+    bonus = user.get("bonus_messages", 0) or 0
+    limit = get_daily_limit(plan, bonus)
     today = _today()
     usage = user.get("daily_usage", 0)
     if user.get("last_usage_date") != today:
@@ -153,12 +198,13 @@ def _check_usage_fallback(user_id: int) -> dict:
 
     history = get_recent_messages(user_id)
     return {
-        "allowed":   allowed,
-        "usage":     usage,
-        "limit":     limit,
-        "plan":      plan,
-        "chat_mode": get_chat_mode(user),
-        "history":   history,
+        "allowed":    allowed,
+        "usage":      usage,
+        "limit":      limit,
+        "plan":       plan,
+        "chat_mode":  get_chat_mode(user),
+        "web_search": get_web_search_enabled(user),
+        "history":    history,
     }
 
 
@@ -186,7 +232,15 @@ def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
 
 
 @with_retry()
-def clear_history(user_id: int) -> int:
+def get_all_messages(user_id: int) -> list[dict]:
+    result = (
+        _client.table("messages")
+        .select("role, content, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return result.data
     result = _client.table("messages").delete().eq("user_id", user_id).execute()
     return len(result.data) if result.data else 0
 
