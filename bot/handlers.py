@@ -263,11 +263,6 @@ async def cmd_clear(message: Message) -> None:
     )
 
 
-@router.message(Command("grant"))
-async def cmd_grant(message: Message, command: CommandObject) -> None:
-    if message.from_user.id not in settings.admin_ids:
-        return
-
     if not command.args:
         await message.answer("İstifadə: /grant <user_id> <free|premium>")
         return
@@ -328,6 +323,253 @@ async def handle_successful_payment(message: Message) -> None:
         f"Günlük limit: {settings.premium_daily_limit} mesaj."
     )
 
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ADMIN PANEL
+# ══════════════════════════════════════════════════════════════════════════
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in settings.admin_ids
+
+
+def _admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Statistika",    callback_data="admin:stats"),
+            InlineKeyboardButton(text="👥 İstifadəçilər", callback_data="admin:users"),
+        ],
+        [
+            InlineKeyboardButton(text="📢 Broadcast",     callback_data="admin:broadcast_prompt"),
+            InlineKeyboardButton(text="🔍 User axtar",    callback_data="admin:lookup_prompt"),
+        ],
+    ])
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "🛠 <b>Admin Panel</b>\n\nNə etmək istəyirsən?",
+        reply_markup=_admin_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin:"))
+async def cb_admin(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("İcazən yoxdur.", show_alert=True)
+        return
+
+    action = callback.data.split(":", 1)[1]
+
+    # ── Stats ──────────────────────────────────────────────────────────────
+    if action == "stats":
+        stats = await asyncio.to_thread(db.get_stats)
+        free_users = stats["total_users"] - stats["premium_users"]
+        text = (
+            "📊 <b>Bot Statistikası</b>\n\n"
+            f"👥 Cəmi istifadəçi:  <b>{stats['total_users']}</b>\n"
+            f"⭐ Premium:           <b>{stats['premium_users']}</b>\n"
+            f"🆓 Pulsuz:            <b>{free_users}</b>\n"
+            f"🟢 Bu gün aktiv:     <b>{stats['active_today']}</b>\n"
+            f"💬 Bu günkü mesaj:   <b>{stats['messages_today']}</b>\n"
+            f"📨 Cəmi mesaj:       <b>{stats['total_messages']}</b>"
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Yenilə", callback_data="admin:stats")],
+                [InlineKeyboardButton(text="⬅️ Geri",   callback_data="admin:back")],
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    # ── Users summary ──────────────────────────────────────────────────────
+    elif action == "users":
+        stats = await asyncio.to_thread(db.get_stats)
+        text = (
+            "👥 <b>İstifadəçilər</b>\n\n"
+            f"Cəmi: <b>{stats['total_users']}</b>\n"
+            f"Premium: <b>{stats['premium_users']}</b>\n\n"
+            "Konkret istifadəçini tapmaq üçün:\n"
+            "<code>/lookup @username</code> və ya\n"
+            "<code>/lookup 123456789</code>"
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Geri", callback_data="admin:back")]
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    # ── Broadcast prompt ───────────────────────────────────────────────────
+    elif action == "broadcast_prompt":
+        await callback.message.edit_text(
+            "📢 <b>Broadcast</b>\n\n"
+            "Bütün istifadəçilərə mesaj göndər:\n\n"
+            "<code>/broadcast Mətnin buraya</code>\n\n"
+            "⚠️ Bu əməliyyat geri alına bilməz!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Geri", callback_data="admin:back")]
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    # ── Lookup prompt ──────────────────────────────────────────────────────
+    elif action == "lookup_prompt":
+        await callback.message.edit_text(
+            "🔍 <b>User axtar</b>\n\n"
+            "İstifadəçi tapmaq üçün:\n"
+            "<code>/lookup @username</code>\n"
+            "<code>/lookup 123456789</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Geri", callback_data="admin:back")]
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    # ── Back to admin menu ─────────────────────────────────────────────────
+    elif action == "back":
+        await callback.message.edit_text(
+            "🛠 <b>Admin Panel</b>\n\nNə etmək istəyirsən?",
+            reply_markup=_admin_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    else:
+        await callback.answer()
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, command: CommandObject) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    if not command.args:
+        await message.answer("İstifadə: /broadcast <mətn>")
+        return
+
+    text = command.args.strip()
+    broadcast_text = f"📢 <b>Bot xəbəri</b>\n\n{text}"
+
+    user_ids = await asyncio.to_thread(db.get_all_user_ids)
+    total = len(user_ids)
+
+    status_msg = await message.answer(
+        f"⏳ Broadcast başladı...\n"
+        f"Cəmi {total} istifadəçiyə göndərilir."
+    )
+
+    sent = failed = 0
+    for uid in user_ids:
+        try:
+            await message.bot.send_message(uid, broadcast_text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+        # Small delay to avoid hitting Telegram rate limits
+        await asyncio.sleep(0.05)
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast tamamlandı</b>\n\n"
+        f"✉️ Göndərildi: {sent}\n"
+        f"❌ Uğursuz: {failed}\n"
+        f"📊 Cəmi: {total}",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("lookup"))
+async def cmd_lookup(message: Message, command: CommandObject) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    if not command.args:
+        await message.answer("İstifadə: /lookup <user_id | @username>")
+        return
+
+    query = command.args.strip()
+    user = await asyncio.to_thread(db.search_user, query)
+
+    if not user:
+        await message.answer(f"❌ İstifadəçi tapılmadı: <code>{query}</code>", parse_mode="HTML")
+        return
+
+    plan = user.get("plan", "free")
+    mode = user.get("chat_mode", "default")
+    usage = user.get("daily_usage", 0)
+    limit = db.get_daily_limit(plan)
+    until = user.get("premium_until", "—")
+    if until and until != "—":
+        until = until[:10]
+
+    text = (
+        f"👤 <b>İstifadəçi məlumatı</b>\n\n"
+        f"🆔 ID:      <code>{user['id']}</code>\n"
+        f"👤 Ad:      {user.get('first_name') or '—'}\n"
+        f"📛 Username: @{user.get('username') or '—'}\n"
+        f"📦 Plan:    <b>{plan}</b>\n"
+        f"📅 Premium bitmə: {until}\n"
+        f"🎭 Rejim:   {MODE_NAMES.get(mode, mode)}\n"
+        f"💬 Bu gün: {usage}/{limit} mesaj\n"
+        f"📆 Qeydiyyat: {str(user.get('created_at', '—'))[:10]}"
+    )
+
+    uid = user["id"]
+    await message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⭐ Premium ver", callback_data=f"agrant:{uid}:premium"),
+                InlineKeyboardButton(text="🆓 Pulsuz et",  callback_data=f"agrant:{uid}:free"),
+            ],
+            [
+                InlineKeyboardButton(text="🗑 Tarixçəni sil", callback_data=f"aclear:{uid}"),
+            ],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("agrant:"))
+async def cb_admin_grant(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("İcazən yoxdur.", show_alert=True)
+        return
+
+    _, uid_str, plan = callback.data.split(":")
+    uid = int(uid_str)
+
+    if plan == "premium":
+        await asyncio.to_thread(db.activate_premium, uid, settings.premium_duration_days)
+        label = f"⭐ Premium verildi ({settings.premium_duration_days} gün)"
+    else:
+        await asyncio.to_thread(db.set_plan, uid, "free")
+        label = "🆓 Pulsuz plana keçirildi"
+
+    await callback.answer(label, show_alert=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+
+@router.callback_query(F.data.startswith("aclear:"))
+async def cb_admin_clear(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("İcazən yoxdur.", show_alert=True)
+        return
+
+    uid = int(callback.data.split(":")[1])
+    count = await asyncio.to_thread(db.clear_history, uid)
+    await callback.answer(f"🗑 {count} mesaj silindi", show_alert=True)
 
 # ── Core AI handler (shared logic for text + photo) ────────────────────────
 

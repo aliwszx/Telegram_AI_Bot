@@ -164,3 +164,50 @@ def clear_history(user_id: int) -> int:
     """Delete all messages for a user. Returns count of deleted rows."""
     result = _client.table("messages").delete().eq("user_id", user_id).execute()
     return len(result.data) if result.data else 0
+
+
+# ── Admin ──────────────────────────────────────────────────────────────────
+
+def get_stats() -> dict:
+    """Return key bot statistics for the admin panel."""
+    today = _today()
+
+    total = _client.table("users").select("id", count="exact").execute()
+    premium = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
+    active_today = (
+        _client.table("users")
+        .select("id", count="exact")
+        .eq("last_usage_date", today)
+        .execute()
+    )
+    msgs_today = (
+        _client.table("messages")
+        .select("id", count="exact")
+        .gte("created_at", f"{today}T00:00:00")
+        .execute()
+    )
+    total_msgs = _client.table("messages").select("id", count="exact").execute()
+
+    return {
+        "total_users":    total.count or 0,
+        "premium_users":  premium.count or 0,
+        "active_today":   active_today.count or 0,
+        "messages_today": msgs_today.count or 0,
+        "total_messages": total_msgs.count or 0,
+    }
+
+
+def search_user(query: str) -> dict | None:
+    """Find a user by numeric ID or @username."""
+    query = query.strip().lstrip("@")
+    if query.isdigit():
+        r = _client.table("users").select("*").eq("id", int(query)).execute()
+    else:
+        r = _client.table("users").select("*").eq("username", query).execute()
+    return r.data[0] if r.data else None
+
+
+def get_all_user_ids() -> list[int]:
+    """Return all user IDs (for broadcast)."""
+    result = _client.table("users").select("id").execute()
+    return [row["id"] for row in result.data]
