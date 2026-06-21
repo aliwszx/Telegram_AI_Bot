@@ -11,7 +11,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-from bot.cache import init_cache, close_cache
 from bot.config import settings
 from bot.handlers import router
 from bot.middlewares import FloodControlMiddleware
@@ -25,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 async def on_startup(app: web.Application) -> None:
     bot: Bot = app["bot"]
-    await init_cache()
     webhook_url = settings.webhook_base_url.rstrip("/") + settings.webhook_path
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
     logger.info("Webhook set → %s", webhook_url)
@@ -33,8 +31,6 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_shutdown(app: web.Application) -> None:
     bot: Bot = app["bot"]
-    await close_cache()
-    await bot.delete_webhook()
     await bot.session.close()
     logger.info("Bot shutdown complete.")
 

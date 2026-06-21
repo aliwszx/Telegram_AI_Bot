@@ -15,7 +15,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from bot.cache import init_cache, close_cache
 from bot.config import settings
 from bot.handlers import router
 from bot.middlewares import FloodControlMiddleware
@@ -29,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     settings.validate()
-
-    await init_cache()
 
     bot = Bot(
         token=settings.bot_token,
@@ -46,7 +43,6 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
-        await close_cache()
         await bot.session.close()
 
 

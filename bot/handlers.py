@@ -628,9 +628,6 @@ async def _handle_ai_message(
         asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
     )
 
-    from bot import cache as redis_cache
-    await redis_cache.invalidate_user(user.id)
-
     await message.answer(reply_text)
 
     if remaining <= 3:
