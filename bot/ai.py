@@ -31,19 +31,36 @@ def _build_contents(history: list[dict], new_message: str) -> list[types.Content
     return contents
 
 
-def generate_reply(history: list[dict], new_message: str) -> str:
+def generate_reply(
+    history: list[dict], new_message: str, language_hint: str | None = None
+) -> str:
     """
     Synchronous call to Gemini. `history` is a list of
     {"role": "user"|"assistant", "content": str} dicts, oldest first.
+
+    `language_hint` is the user's Telegram app language code (e.g. "az",
+    "uz", "en") taken from message.from_user.language_code. It's only used
+    by the model as a tiebreaker for short/ambiguous messages (e.g. a one-word
+    greeting shared by several similar languages) — it never overrides a
+    language the user is clearly writing in.
     """
     contents = _build_contents(history, new_message)
+
+    system_instruction = settings.gemini_system_prompt
+    if language_hint:
+        system_instruction += (
+            f"\n\n(Context: this user's Telegram app language is set to "
+            f"'{language_hint}'. Use this only to disambiguate short or "
+            f"unclear messages — always prioritize the actual language the "
+            f"user is writing in if it's clear.)"
+        )
 
     try:
         response = _client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=types.GenerateContentConfig(
-                system_instruction=settings.gemini_system_prompt,
+                system_instruction=system_instruction,
             ),
         )
     except Exception as exc:  # noqa: BLE001 - we want a clean user-facing fallback
