@@ -16,7 +16,20 @@ def _get_int(name: str, default: int) -> int:
 
 def _get_list(name: str) -> list[int]:
     raw = os.getenv(name, "")
-    return [int(x.strip()) for x in raw.split(",") if x.strip()]
+    result: list[int] = []
+    for x in raw.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        if not x.lstrip("-").isdigit():
+            print(
+                f"[config] WARNING: ignoring invalid {name} entry '{x}' — "
+                "must be a numeric Telegram user ID, not a @username. "
+                "Get your numeric ID from @userinfobot on Telegram."
+            )
+            continue
+        result.append(int(x))
+    return result
 
 
 @dataclass(frozen=True)
