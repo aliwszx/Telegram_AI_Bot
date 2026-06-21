@@ -9,7 +9,7 @@ import logging
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
 
 from bot import db
 from bot.ai import generate_reply, GeminiError
@@ -27,12 +27,14 @@ WELCOME_TEXT = (
     "/start — botu başlat\n"
     "/help — kömək\n"
     "/status — planın və günlük limitin\n"
+    "/upgrade — Telegram Stars ilə premiuma keç\n"
 )
 
 HELP_TEXT = (
     "ℹ️ İstifadə qaydası:\n"
     "Sadəcə mesaj yaz, AI cavab verəcək.\n\n"
     "/status — plan (free/premium) və günlük limitin neçə qalıb\n"
+    "/upgrade — Telegram Stars ilə premiuma keç (limitin artır)\n"
     "/start — yenidən başlatma mesajı\n"
 )
 
@@ -57,18 +59,23 @@ async def cmd_status(message: Message) -> None:
     row = await asyncio.to_thread(
         db.get_or_create_user, user.id, user.username, user.first_name
     )
-    plan = row.get("plan", "free")
+    plan = await asyncio.to_thread(db.effective_plan, row)
     limit = db.get_daily_limit(plan)
     usage = row.get("daily_usage", 0)
     used_today = usage if row.get("last_usage_date") == db.today() else 0
     remaining = max(limit - used_today, 0)
 
-    await message.answer(
-        f"📊 Plan: <b>{plan}</b>\n"
-        f"Bugünkü istifadə: {used_today}/{limit}\n"
+    lines = [
+        f"📊 Plan: <b>{plan}</b>",
+        f"Bugünkü istifadə: {used_today}/{limit}",
         f"Qalan limit: {remaining}",
-        parse_mode="HTML",
-    )
+    ]
+    if plan == "premium" and row.get("premium_until"):
+        lines.append(f"Premium bitmə tarixi: {row['premium_until'][:10]}")
+    elif plan == "free":
+        lines.append(f"\n⭐ Premium almaq üçün: /upgrade")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.message(Command("grant"))
@@ -90,6 +97,58 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
     target_id, plan = int(parts[0]), parts[1]
     await asyncio.to_thread(db.set_plan, target_id, plan)
     await message.answer(f"✅ User {target_id} → plan: {plan}")
+
+
+@router.message(Command("upgrade"))
+async def cmd_upgrade(message: Message) -> None:
+    """Sends a Telegram Stars invoice to upgrade to premium.
+    Stars (currency 'XTR') need no payment provider/bank setup — Telegram
+    handles the payment itself, and it works in every country."""
+    row = await asyncio.to_thread(
+        db.get_or_create_user,
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name,
+    )
+    plan = await asyncio.to_thread(db.effective_plan, row)
+    if plan == "premium":
+        await message.answer(
+            f"✅ Artıq premium istifadəçisisən "
+            f"(bitmə tarixi: {row.get('premium_until', '—')[:10] if row.get('premium_until') else 'sonsuz'})."
+        )
+        return
+
+    await message.bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Premium plan",
+        description=(
+            f"{settings.premium_duration_days} gün premium: "
+            f"günlük {settings.premium_daily_limit} mesaj limiti."
+        ),
+        payload=f"premium_upgrade:{message.from_user.id}",
+        currency="XTR",
+        prices=[LabeledPrice(label="Premium", amount=settings.stars_price)],
+        provider_token="",  # not needed for Telegram Stars
+    )
+
+
+@router.pre_checkout_query()
+async def handle_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
+    # Always approve here unless you need to re-validate stock/price; the
+    # actual upgrade happens only after successful_payment below.
+    await pre_checkout_query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def handle_successful_payment(message: Message) -> None:
+    until = await asyncio.to_thread(
+        db.activate_premium, message.from_user.id, settings.premium_duration_days
+    )
+    await message.answer(
+        "🎉 Ödəniş uğurla alındı! Premium aktivləşdi.\n"
+        f"Bitmə tarixi: {until.date().isoformat()}\n"
+        f"Günlük limit: {settings.premium_daily_limit} mesaj."
+    )
 
 
 @router.message(F.text & ~F.text.startswith("/"))
