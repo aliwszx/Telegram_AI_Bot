@@ -112,6 +112,23 @@ Bot indi polling rejimində işləyəcək — Telegram-da botuna `/start` yaz.
 - Premium üçün limiti artırmaq, ya da limitsiz etmək sadəcə
   `PREMIUM_DAILY_LIMIT` dəyərini dəyişməklə mümkündür.
 
+## 5.1. Dil problemi (məs. "salam" yazanda Özbəkcə cavab gəlir)
+
+Bot universal işləyir — istifadəçi hansı dildə yazırsa, həmin dildə cavab
+verir (Gemini özü dili aşkarlayır). Problem yalnız çox qısa/oxşar mesajlarda
+yaranır: "salam" kimi sözlər Azərbaycan, Özbək, Türk dillərində demək olar ki
+eynidir, ona görə model bəzən səhv təxmin edə bilir.
+
+Bunun qarşısını almaq üçün bot hər sorğuda istifadəçinin **Telegram tətbiq
+dilini** (`message.from_user.language_code`, məs. `az`, `uz`, `tr`, `en`) Gemini-yə
+əlavə ipucu kimi göndərir (`bot/ai.py` → `generate_reply(..., language_hint=...)`).
+Bu ipucu yalnız qısa/qeyri-müəyyən mesajlarda tie-breaker kimi işləyir —
+istifadəçi aydın şəkildə başqa dildə yazırsa, model həmin dili üstün tutur.
+
+Qeyd: bu, istifadəçinin Telegram tətbiqində seçdiyi dilə əsaslanır (Settings
+→ Language), real coğrafi məkana yox. Əgər istifadəçi Telegram-ı, məsələn,
+İngilis dilində istifadə edirsə, ipucu da "en" olacaq.
+
 ## 6. GitHub-a yükləmə
 
 ```bash
