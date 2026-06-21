@@ -1,10 +1,10 @@
 services:
-  - type: worker
+  - type: web
     name: telegram-ai-bot
     env: python
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python main_webhook.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -32,3 +32,11 @@ services:
         value: "30"
       - key: ADMIN_IDS
         sync: false
+      # IMPORTANT: after the first deploy, Render assigns you a public URL
+      # like https://telegram-ai-bot-xxxx.onrender.com — copy it and set
+      # it here, then redeploy (or just set it manually in the Render
+      # dashboard under Environment).
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: WEBHOOK_PATH
+        value: /webhook
