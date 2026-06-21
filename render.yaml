@@ -26,5 +26,9 @@ services:
         value: "20"
       - key: PREMIUM_DAILY_LIMIT
         value: "300"
+      - key: STARS_PRICE
+        value: "100"
+      - key: PREMIUM_DURATION_DAYS
+        value: "30"
       - key: ADMIN_IDS
         sync: false
