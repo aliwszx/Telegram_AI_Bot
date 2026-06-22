@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 
 _client = genai.Client(api_key=settings.gemini_api_key)
 
-# Fallback chain — ordered by available quota (highest RPD first)
-# gemini-3.1-flash-lite: 500 RPD  ← primary (ən yüksək limit)
-# gemini-2.5-flash-lite: 20 RPD
-# gemini-3-flash:        20 RPD
-# gemini-3.5-flash:      20 RPD
-# gemini-2.5-flash:      20 RPD   ← ən sona (tez dolar)
+# Fallback chain — ordered by stability and quota
+# gemini-2.5-flash-lite: stable GA model, highest free quota  ← primary
+# gemini-3.1-flash-lite: preview model, lower rate limits
+# gemini-3-flash:        stable
+# gemini-3.5-flash:      stable
+# gemini-2.5-flash:      ən sona (daha bahalı)
 FALLBACK_MODELS = [
-    settings.gemini_model,          # gemini-3.1-flash-lite (500 RPD)
-    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite",        # stable GA, ən yüksək free quota
+    settings.gemini_model,          # gemini-3.1-flash-lite (preview, limit az)
     "gemini-3-flash",
     "gemini-3.5-flash",
     "gemini-2.5-flash",
