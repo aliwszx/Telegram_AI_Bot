@@ -400,7 +400,7 @@ def generate_reply(
         except Exception as exc:  # noqa: BLE001
             if is_rate_limited(exc):
                 if is_daily_quota_exhausted(exc):
-                    _rotation.mark_daily_exhausted(client, model)
+                    _rotation.mark_rpm_limited(client, wait)
                     # Fərqli key/model kombinasiyasını cəhd et
                     continue
 
