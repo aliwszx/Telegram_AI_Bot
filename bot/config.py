@@ -43,7 +43,7 @@ class Settings:
 
     # ── Gemini ─────────────────────────────────────────────────────────────
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
     # ── Supabase ───────────────────────────────────────────────────────────
     supabase_url: str = os.getenv("SUPABASE_URL", "")
