@@ -59,6 +59,19 @@ def is_rate_limited(exc: Exception) -> bool:
     return False
 
 
+def is_daily_quota_exhausted(exc: Exception) -> bool:
+    """
+    RPD (gunluk limit) dolubdur — bu gun bu modelden istifade olmaz.
+    RPM asimimdan ferqli olaraq, gozlemek fayde vermez, novbeti modele kecmek lazimdir.
+    """
+    msg = str(exc).lower()
+    if re.search(r"per.?day|requests_per_day|daily.?(?:limit|quota|request)", msg):
+        return True
+    if "exceeded your current quota" in msg:
+        return True
+    return False
+
+
 def is_model_not_found(exc: Exception) -> bool:
     """Detects 404 / model-not-found errors — skip to next model, don't retry."""
     msg = str(exc).lower()
