@@ -16,7 +16,7 @@ from google import genai
 from google.genai import types
 
 from bot.config import settings
-from bot.retry import is_rate_limited, is_transient
+from bot.retry import is_rate_limited, is_transient, is_model_not_found
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ _client = genai.Client(api_key=settings.gemini_api_key)
 # Fallback chain — if primary hits rate limit, silently try next
 FALLBACK_MODELS = [
     settings.gemini_model,
-    "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
     "gemini-3-flash",
     "gemini-2.5-flash",
@@ -254,6 +253,12 @@ def generate_reply(
                     time.sleep(0.3)
                     break
 
+                if is_model_not_found(exc):
+                    logger.warning("Model %s not found, trying next.", model)
+                    last_error = exc
+                    last_was_rate_limit = False
+                    break
+
                 if is_transient(exc) and transient_attempts < 2:
                     transient_attempts += 1
                     delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
@@ -335,6 +340,12 @@ def generate_reply_stream(
                     last_error = exc
                     last_was_rate_limit = True
                     time.sleep(0.3)
+                    break
+
+                if is_model_not_found(exc):
+                    logger.warning("Model %s not found (stream), trying next.", model)
+                    last_error = exc
+                    last_was_rate_limit = False
                     break
 
                 if is_transient(exc) and transient_attempts < 2:
