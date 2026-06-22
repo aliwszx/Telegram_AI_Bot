@@ -1,11 +1,8 @@
 """
 Database access layer — Supabase.
 
-Key optimisation: the hot path (every AI message) uses a single
-PostgreSQL RPC call (check_usage_and_get_history) instead of 3
-separate round-trips.
-
-All functions are synchronous; wrap with asyncio.to_thread() in handlers.
+Optimised hot path: single PostgreSQL RPC call per AI message.
+New features: conversation topics, revenue tracking, premium expiry warnings.
 """
 from __future__ import annotations
 
@@ -54,9 +51,9 @@ def get_or_create_user(
         "daily_usage": 0,
         "last_usage_date": _today(),
         "chat_mode": "default",
+        "language_code": None,
     }
     if referred_by and referred_by != user_id:
-        # Make sure the referrer actually exists before crediting them.
         ref_row = get_user(referred_by)
         if ref_row is not None:
             new_row["referred_by"] = referred_by
@@ -78,6 +75,20 @@ def get_or_create_user(
 
 
 @with_retry()
+def get_user(user_id: int) -> dict | None:
+    result = _client.table("users").select("*").eq("id", user_id).execute()
+    return result.data[0] if result.data else None
+
+
+@with_retry()
+def update_user_language(user_id: int, language_code: str | None) -> None:
+    if language_code:
+        _client.table("users").update(
+            {"language_code": language_code}
+        ).eq("id", user_id).execute()
+
+
+@with_retry()
 def add_bonus_messages(user_id: int, amount: int) -> None:
     user = get_user(user_id)
     if user is None:
@@ -86,12 +97,6 @@ def add_bonus_messages(user_id: int, amount: int) -> None:
     _client.table("users").update(
         {"bonus_messages": current + amount}
     ).eq("id", user_id).execute()
-
-
-@with_retry()
-def get_user(user_id: int) -> dict | None:
-    result = _client.table("users").select("*").eq("id", user_id).execute()
-    return result.data[0] if result.data else None
 
 
 def get_daily_limit(plan: Plan, bonus: int = 0) -> int:
@@ -133,13 +138,43 @@ def effective_plan(user: dict) -> Plan:
     return "premium"
 
 
+def days_until_premium_expires(user: dict) -> int | None:
+    """Returns number of days until premium expires, or None if not premium / no expiry."""
+    if user.get("plan") != "premium":
+        return None
+    until = _parse_dt(user.get("premium_until"))
+    if until is None:
+        return None
+    delta = until - dt.datetime.now(dt.timezone.utc)
+    return max(0, delta.days)
+
+
 @with_retry()
 def activate_premium(user_id: int, days: int) -> dt.datetime:
     until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
     _client.table("users").update(
-        {"plan": "premium", "premium_until": until.isoformat()}
+        {
+            "plan": "premium",
+            "premium_until": until.isoformat(),
+            "total_payments": _increment_field(user_id, "total_payments", 1),
+            "total_stars_spent": _increment_field(user_id, "total_stars_spent", settings.stars_price),
+        }
     ).eq("id", user_id).execute()
+    # Log payment
+    _client.table("payments").insert({
+        "user_id": user_id,
+        "stars": settings.stars_price,
+        "days": days,
+        "plan": "premium",
+    }).execute()
     return until
+
+
+def _increment_field(user_id: int, field: str, by: int) -> int:
+    user = get_user(user_id)
+    if user is None:
+        return by
+    return (user.get(field, 0) or 0) + by
 
 
 @with_retry()
@@ -163,9 +198,21 @@ def get_chat_mode(user: dict) -> str:
 # ── Hot path: single RPC call ──────────────────────────────────────────────
 
 def check_usage_and_get_history(user_id: int) -> dict:
-    """
-    Tries the single PostgreSQL RPC first, falls back to 3-query path.
-    """
+    """Single PostgreSQL RPC call — falls back to 3-query path if RPC unavailable."""
+    try:
+        result = _client.rpc("check_usage_and_get_history", {
+            "p_user_id": user_id,
+            "p_free_limit": settings.free_daily_limit,
+            "p_prem_limit": settings.premium_daily_limit,
+            "p_hist_limit": settings.history_limit,
+        }).execute()
+        if result.data:
+            data = result.data
+            if isinstance(data, list):
+                data = data[0]
+            return data
+    except Exception:  # noqa: BLE001
+        pass
     return _check_usage_fallback(user_id)
 
 
@@ -205,16 +252,23 @@ def _check_usage_fallback(user_id: int) -> dict:
         "chat_mode":  get_chat_mode(user),
         "web_search": get_web_search_enabled(user),
         "history":    history,
+        "user":       user,
     }
 
 
 # ── Messages ───────────────────────────────────────────────────────────────
 
 @with_retry()
-def save_message(user_id: int, role: Literal["user", "assistant"], content: str) -> None:
-    _client.table("messages").insert(
-        {"user_id": user_id, "role": role, "content": content}
-    ).execute()
+def save_message(
+    user_id: int,
+    role: Literal["user", "assistant"],
+    content: str,
+    topic: str | None = None,
+) -> None:
+    payload: dict = {"user_id": user_id, "role": role, "content": content}
+    if topic:
+        payload["topic"] = topic
+    _client.table("messages").insert(payload).execute()
 
 
 @with_retry()
@@ -235,12 +289,16 @@ def get_recent_messages(user_id: int, limit: int | None = None) -> list[dict]:
 def get_all_messages(user_id: int) -> list[dict]:
     result = (
         _client.table("messages")
-        .select("role, content, created_at")
+        .select("role, content, created_at, topic")
         .eq("user_id", user_id)
         .order("created_at", desc=False)
         .execute()
     )
     return result.data
+
+
+@with_retry()
+def clear_history(user_id: int) -> int:
     result = _client.table("messages").delete().eq("user_id", user_id).execute()
     return len(result.data) if result.data else 0
 
@@ -250,17 +308,40 @@ def get_all_messages(user_id: int) -> list[dict]:
 @with_retry()
 def get_stats() -> dict:
     today = _today()
-    total        = _client.table("users").select("id", count="exact").execute()
-    premium      = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
-    active_today = _client.table("users").select("id", count="exact").eq("last_usage_date", today).execute()
-    msgs_today   = _client.table("messages").select("id", count="exact").gte("created_at", f"{today}T00:00:00").execute()
-    total_msgs   = _client.table("messages").select("id", count="exact").execute()
+    this_month_start = dt.date.today().replace(day=1).isoformat()
+
+    total         = _client.table("users").select("id", count="exact").execute()
+    premium       = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
+    active_today  = _client.table("users").select("id", count="exact").eq("last_usage_date", today).execute()
+    msgs_today    = _client.table("messages").select("id", count="exact").gte("created_at", f"{today}T00:00:00").execute()
+    total_msgs    = _client.table("messages").select("id", count="exact").execute()
+
+    # Revenue stats (if payments table exists)
+    revenue_total = 0
+    revenue_month = 0
+    payment_count = 0
+    try:
+        rev = _client.table("payments").select("stars").execute()
+        if rev.data:
+            revenue_total = sum(r.get("stars", 0) for r in rev.data)
+            payment_count = len(rev.data)
+        rev_month = _client.table("payments").select("stars").gte(
+            "created_at", f"{this_month_start}T00:00:00"
+        ).execute()
+        if rev_month.data:
+            revenue_month = sum(r.get("stars", 0) for r in rev_month.data)
+    except Exception:  # noqa: BLE001
+        pass
+
     return {
         "total_users":    total.count or 0,
         "premium_users":  premium.count or 0,
         "active_today":   active_today.count or 0,
         "messages_today": msgs_today.count or 0,
         "total_messages": total_msgs.count or 0,
+        "revenue_total":  revenue_total,
+        "revenue_month":  revenue_month,
+        "payment_count":  payment_count,
     }
 
 
@@ -278,3 +359,32 @@ def search_user(query: str) -> dict | None:
 def get_all_user_ids() -> list[int]:
     result = _client.table("users").select("id").execute()
     return [row["id"] for row in result.data]
+
+
+@with_retry()
+def get_users_expiring_soon(days: int) -> list[dict]:
+    """Returns premium users whose subscription expires within `days` days."""
+    now = dt.datetime.now(dt.timezone.utc)
+    cutoff = (now + dt.timedelta(days=days)).isoformat()
+    result = (
+        _client.table("users")
+        .select("id, first_name, username, premium_until")
+        .eq("plan", "premium")
+        .lte("premium_until", cutoff)
+        .gte("premium_until", now.isoformat())
+        .execute()
+    )
+    return result.data or []
+
+
+@with_retry()
+def get_top_users(limit: int = 10) -> list[dict]:
+    """Returns top users by total messages sent."""
+    result = (
+        _client.table("users")
+        .select("id, first_name, username, plan, daily_usage")
+        .order("daily_usage", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []

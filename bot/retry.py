@@ -1,72 +1,57 @@
 """
-Small retry / exponential-backoff helpers shared by ai.py and db.py.
-
-Only *transient* errors are retried (timeouts, connection resets, 502/503/504,
-DNS hiccups, etc). Things like auth errors, bad requests, or "not found"
-are re-raised immediately — retrying them would just waste time.
+Retry utilities for transient errors.
 """
 from __future__ import annotations
 
 import functools
 import logging
-import random
 import time
+from typing import Callable, TypeVar
 
 logger = logging.getLogger(__name__)
+F = TypeVar("F", bound=Callable)
 
-TRANSIENT_KEYWORDS = (
-    "timeout",
-    "timed out",
-    "connection",
-    "connect",
-    "network",
-    "temporarily unavailable",
-    "reset by peer",
-    "broken pipe",
-    "502",
-    "503",
-    "504",
-    "ssl",
-    "eof occurred",
+_TRANSIENT_KEYWORDS = (
+    "connection", "timeout", "reset", "unavailable",
+    "503", "502", "504", "temporarily",
 )
 
-RATE_LIMIT_KEYWORDS = ("429", "quota", "rate", "resource_exhausted")
+_RATE_LIMIT_KEYWORDS = (
+    "rate", "quota", "429", "resource_exhausted",
+    "resourceexhausted", "too many",
+)
 
 
-def is_transient(exc: BaseException) -> bool:
-    """Heuristic: is this likely a network glitch worth retrying?"""
-    err_str = str(exc).lower()
-    return any(k in err_str for k in TRANSIENT_KEYWORDS)
+def is_transient(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _TRANSIENT_KEYWORDS)
 
 
-def is_rate_limited(exc: BaseException) -> bool:
-    err_str = str(exc).lower()
-    return any(k in err_str for k in RATE_LIMIT_KEYWORDS)
+def is_rate_limited(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _RATE_LIMIT_KEYWORDS)
 
 
-def with_retry(retries: int = 2, base_delay: float = 0.5, max_delay: float = 4.0):
-    """
-    Decorator for synchronous functions that talk to a network service
-    (e.g. Supabase calls in db.py). Retries only on transient errors,
-    with exponential backoff + small jitter.
-    """
-    def decorator(fn):
+def with_retry(max_attempts: int = 3, base_delay: float = 0.5):
+    """Decorator that retries on transient DB errors."""
+    def decorator(fn: F) -> F:
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            attempt = 0
-            while True:
+            last_exc: Exception | None = None
+            for attempt in range(1, max_attempts + 1):
                 try:
                     return fn(*args, **kwargs)
                 except Exception as exc:  # noqa: BLE001
-                    if not is_transient(exc) or attempt >= retries:
+                    last_exc = exc
+                    if not is_transient(exc):
                         raise
-                    attempt += 1
-                    delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-                    delay += random.uniform(0, 0.25)
-                    logger.warning(
-                        "%s: transient error (attempt %s/%s), retrying in %.2fs: %s",
-                        fn.__name__, attempt, retries, delay, exc,
-                    )
-                    time.sleep(delay)
-        return wrapper
+                    if attempt < max_attempts:
+                        delay = base_delay * (2 ** (attempt - 1))
+                        logger.warning(
+                            "%s transient error (attempt %s/%s), retrying in %.1fs: %s",
+                            fn.__name__, attempt, max_attempts, delay, exc,
+                        )
+                        time.sleep(delay)
+            raise last_exc
+        return wrapper  # type: ignore
     return decorator

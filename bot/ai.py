@@ -1,12 +1,13 @@
 """
 Gemini API wrapper with:
-- Multi-model fallback (auto-switches when rate limit hit)
-- Image support (user can send photos for analysis)
-- Chat mode system prompts (teacher, coder, friend, default)
+- Multi-model fallback (auto-switches when rate limited)
+- Image, audio, PDF/document support
+- Extended chat modes (10 personas)
+- Streaming support
+- Language-aware responses
 """
 from __future__ import annotations
 
-import base64
 import logging
 import re
 import time
@@ -21,55 +22,111 @@ logger = logging.getLogger(__name__)
 
 _client = genai.Client(api_key=settings.gemini_api_key)
 
-# Fallback chain: primary model first, then backups in order.
-# If primary hits rate limit, we silently try the next one.
+# Fallback chain — if primary hits rate limit, silently try next
 FALLBACK_MODELS = [
-    settings.gemini_model,          # gemini-3.1-flash-lite  (500 RPD)
-    "gemini-2.5-flash",             # 20 RPD backup
-    "gemini-3.5-flash",             # 20 RPD backup
-    "gemini-3-flash",               # 20 RPD backup
+    settings.gemini_model,
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
 ]
 
-# --- Chat mode system prompts ---
+# ── Chat mode system prompts ───────────────────────────────────────────────
+
 MODE_PROMPTS: dict[str, str] = {
     "default": (
         "You are a helpful, friendly AI assistant inside a Telegram bot. "
         "Always reply in the same language the user used. "
-        "Keep answers concise and clear."
+        "Keep answers concise, clear and well-structured. "
+        "Use emojis sparingly to make responses more readable."
     ),
     "teacher": (
         "You are a patient, encouraging teacher inside a Telegram bot. "
-        "Explain concepts step by step with simple examples. "
+        "Explain concepts step by step with simple examples and analogies. "
         "Always reply in the same language the user used. "
-        "Use analogies and check understanding. Make learning fun!"
+        "Check for understanding, use bullet points for clarity. Make learning fun and engaging!"
     ),
     "coder": (
-        "You are an expert software engineer inside a Telegram bot. "
+        "You are an expert senior software engineer inside a Telegram bot. "
         "Always reply in the same language the user used. "
-        "Give practical, working code examples. "
-        "Prefer concise solutions. Mention edge cases and best practices."
+        "Give practical, working code with brief explanations. "
+        "Prefer concise, idiomatic solutions. Highlight edge cases, security concerns, "
+        "and performance implications. Use code blocks for all code snippets."
     ),
     "friend": (
-        "You are a warm, casual friend chatting on Telegram. "
+        "You are a warm, empathetic close friend chatting on Telegram. "
         "Always reply in the same language the user used. "
-        "Be empathetic, fun, use casual language. "
-        "Keep it light and conversational — like texting a close friend."
+        "Be casual, fun, supportive. Use conversational language, "
+        "show genuine interest and care. Keep it light and natural — like texting."
     ),
     "translator": (
-        "You are a professional translator inside a Telegram bot. "
-        "When the user sends text, detect the language and translate it. "
-        "If the user doesn't specify a target language, translate TO English "
-        "unless the text is already in English — then translate to Azerbaijani. "
-        "Always show: original language → target language, then the translation."
+        "You are a professional multilingual translator inside a Telegram bot. "
+        "When the user sends text, detect the source language and translate it. "
+        "If no target language specified: if text is English → translate to Azerbaijani, "
+        "otherwise → translate to English. "
+        "Format: 🔤 [Source lang] → [Target lang]\n[Translation]\n\n💡 [Brief cultural note if relevant]"
+    ),
+    "lawyer": (
+        "You are an experienced legal advisor inside a Telegram bot. "
+        "Always reply in the same language the user used. "
+        "Provide clear, practical legal information. Always note that this is general "
+        "information and not a substitute for professional legal advice. "
+        "Reference relevant laws when possible. Be thorough but accessible."
+    ),
+    "doctor": (
+        "You are a knowledgeable medical information assistant inside a Telegram bot. "
+        "Always reply in the same language the user used. "
+        "Provide accurate health information clearly and compassionately. "
+        "ALWAYS recommend consulting a real doctor for diagnosis/treatment. "
+        "Never diagnose. Focus on symptoms, general information, and when to seek care."
+    ),
+    "psychologist": (
+        "You are a compassionate, professional psychologist assistant inside a Telegram bot. "
+        "Always reply in the same language the user used. "
+        "Listen actively, validate feelings, and offer evidence-based coping strategies. "
+        "Be warm, non-judgmental, and supportive. "
+        "For serious mental health concerns, always encourage professional help. "
+        "Never provide diagnosis."
+    ),
+    "chef": (
+        "You are a creative, professional chef and culinary expert inside a Telegram bot. "
+        "Always reply in the same language the user used. "
+        "Share recipes with clear steps, ingredient measurements, cooking tips, and variations. "
+        "Include cooking time, difficulty level, and serving size. "
+        "Suggest substitutions for dietary restrictions when relevant."
+    ),
+    "fitness": (
+        "You are a certified personal trainer and nutrition expert inside a Telegram bot. "
+        "Always reply in the same language the user used. "
+        "Provide safe, effective workout plans and nutrition advice tailored to goals. "
+        "Always emphasize proper form to prevent injury. "
+        "Remind users to consult healthcare providers before starting new exercise programs."
     ),
 }
 
 MODE_NAMES = {
-    "default":    "🤖 Default",
-    "teacher":    "📚 Müəllim",
-    "coder":      "💻 Proqramçı",
-    "friend":     "😊 Dost",
-    "translator": "🌐 Tərcüməçi",
+    "default":      "🤖 Standart",
+    "teacher":      "📚 Müəllim",
+    "coder":        "💻 Proqramçı",
+    "friend":       "😊 Dost",
+    "translator":   "🌐 Tərcüməçi",
+    "lawyer":       "⚖️ Hüquqçu",
+    "doctor":       "🏥 Həkim",
+    "psychologist": "🧠 Psixoloq",
+    "chef":         "👨‍🍳 Aşpaz",
+    "fitness":      "💪 Fitnes",
+}
+
+MODE_DESCRIPTIONS = {
+    "default":      "Ümumi köməkçi",
+    "teacher":      "Addım-addım izahat",
+    "coder":        "Kod və texnologiya",
+    "friend":       "Mehriban söhbət",
+    "translator":   "Dil tərcüməsi",
+    "lawyer":       "Hüquqi məsləhət",
+    "doctor":       "Tibbi məlumat",
+    "psychologist": "Psixoloji dəstək",
+    "chef":         "Resept və kulinariya",
+    "fitness":      "İdman və sağlamlıq",
 }
 
 
@@ -80,8 +137,8 @@ def _to_gemini_role(role: str) -> str:
 def _build_contents(
     history: list[dict],
     new_message: str,
-    image_bytes: bytes | None = None,
-    image_mime: str = "image/jpeg",
+    media_bytes: bytes | None = None,
+    media_mime: str = "image/jpeg",
 ) -> list[types.Content]:
     contents: list[types.Content] = []
 
@@ -93,12 +150,12 @@ def _build_contents(
             )
         )
 
-    # Build the new user turn — may include an image
+    # Build new user turn — may include media
     user_parts: list[types.Part] = []
-    if image_bytes:
+    if media_bytes:
         user_parts.append(
             types.Part(
-                inline_data=types.Blob(mime_type=image_mime, data=image_bytes)
+                inline_data=types.Blob(mime_type=media_mime, data=media_bytes)
             )
         )
     if new_message:
@@ -110,21 +167,18 @@ def _build_contents(
     return contents
 
 
-def _build_system_prompt(
-    mode: str,
-    language_hint: str | None = None,
-) -> str:
+def _build_system_prompt(mode: str, language_hint: str | None = None) -> str:
     base = MODE_PROMPTS.get(mode, MODE_PROMPTS["default"])
     if language_hint:
         base += (
-            f"\n\n(Context: this user's Telegram app language is '{language_hint}'. "
+            f"\n\n(Context: user's Telegram app language is '{language_hint}'. "
             "Use this only to disambiguate short/ambiguous messages — always "
             "prioritize the actual language the user is writing in.)"
         )
     return base
 
 
-def _build_config(system_instruction: str, web_search: bool) -> "types.GenerateContentConfig":
+def _build_config(system_instruction: str, web_search: bool) -> types.GenerateContentConfig:
     tools = [types.Tool(google_search=types.GoogleSearch())] if web_search else None
     return types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -132,8 +186,9 @@ def _build_config(system_instruction: str, web_search: bool) -> "types.GenerateC
     )
 
 
-
-    """Try to pull a 'retry in N seconds' hint out of a Gemini error message."""
+def _parse_retry_after(exc: Exception | None, default: int = 30) -> int:
+    if exc is None:
+        return default
     match = re.search(r"retry[_-]?delay['\"]?\s*[:=]\s*['\"]?(\d+)", str(exc), re.IGNORECASE)
     if not match:
         match = re.search(r"(\d+)\s*s(?:ec(?:ond)?s?)?\b", str(exc), re.IGNORECASE)
@@ -152,18 +207,16 @@ def generate_reply(
     new_message: str,
     language_hint: str | None = None,
     mode: str = "default",
-    image_bytes: bytes | None = None,
-    image_mime: str = "image/jpeg",
+    media_bytes: bytes | None = None,
+    media_mime: str = "image/jpeg",
     web_search: bool = False,
 ) -> tuple[str, str]:
     """
     Call Gemini with automatic model fallback.
-
     Returns: (reply_text, model_used)
-
-    Raises GeminiError only if ALL models in the fallback chain fail.
+    Raises GeminiError only if ALL models fail.
     """
-    contents = _build_contents(history, new_message, image_bytes, image_mime)
+    contents = _build_contents(history, new_message, media_bytes, media_mime)
     system_instruction = _build_system_prompt(mode, language_hint)
     config = _build_config(system_instruction, web_search)
 
@@ -189,7 +242,7 @@ def generate_reply(
                 return text, model
 
             except GeminiError:
-                raise  # empty response — no point retrying other models
+                raise
 
             except Exception as exc:  # noqa: BLE001
                 if is_rate_limited(exc):
@@ -197,11 +250,9 @@ def generate_reply(
                     last_error = exc
                     last_was_rate_limit = True
                     time.sleep(0.3)
-                    break  # next model in outer for-loop
+                    break
 
                 if is_transient(exc) and transient_attempts < 2:
-                    # Network glitch (timeout, connection reset, etc) — retry the
-                    # SAME model a couple of times with backoff before giving up on it.
                     transient_attempts += 1
                     delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
                     logger.warning(
@@ -213,17 +264,14 @@ def generate_reply(
                     time.sleep(delay)
                     continue
 
-                # Other errors (auth, invalid request, etc.) → fail immediately
                 raise GeminiError(str(exc)) from exc
 
     if last_was_rate_limit:
         raise GeminiRateLimitError(
             f"All models rate-limited. Last error: {last_error}",
-            retry_after=_parse_retry_after(last_error) if last_error else 30,
+            retry_after=_parse_retry_after(last_error),
         )
-    raise GeminiError(
-        f"All models exhausted. Last error: {last_error}"
-    )
+    raise GeminiError(f"All models exhausted. Last error: {last_error}")
 
 
 def generate_reply_stream(
@@ -231,22 +279,15 @@ def generate_reply_stream(
     new_message: str,
     language_hint: str | None = None,
     mode: str = "default",
-    image_bytes: bytes | None = None,
-    image_mime: str = "image/jpeg",
+    media_bytes: bytes | None = None,
+    media_mime: str = "image/jpeg",
     web_search: bool = False,
 ):
     """
-    Streaming version of generate_reply(). Yields (text_piece, model, is_done)
-    tuples as Gemini generates the reply chunk by chunk.
-
-    Falls back to the next model in FALLBACK_MODELS only if the FIRST chunk
-    of a model fails (rate limit / transient) — once a model has started
-    streaming, we stick with it (switching mid-stream would duplicate text).
-
-    Raises GeminiError / GeminiRateLimitError if every model fails before
-    producing any output.
+    Streaming version. Yields (text_piece, model, is_done) tuples.
+    Falls back to next model only if the FIRST chunk fails.
     """
-    contents = _build_contents(history, new_message, image_bytes, image_mime)
+    contents = _build_contents(history, new_message, media_bytes, media_mime)
     system_instruction = _build_system_prompt(mode, language_hint)
     config = _build_config(system_instruction, web_search)
 
@@ -285,8 +326,6 @@ def generate_reply_stream(
 
             except Exception as exc:  # noqa: BLE001
                 if started:
-                    # Already streamed partial content to the user — can't cleanly
-                    # fall back to another model now without duplicating text.
                     raise GeminiError(str(exc)) from exc
 
                 if is_rate_limited(exc):
@@ -313,11 +352,24 @@ def generate_reply_stream(
     if last_was_rate_limit:
         raise GeminiRateLimitError(
             f"All models rate-limited. Last error: {last_error}",
-            retry_after=_parse_retry_after(last_error) if last_error else 30,
+            retry_after=_parse_retry_after(last_error),
         )
-    raise GeminiError(
-        f"All models exhausted. Last error: {last_error}"
-    )
+    raise GeminiError(f"All models exhausted. Last error: {last_error}")
+
+
+def generate_quick_reply(prompt: str) -> str:
+    """Single-shot generation for inline mode and quick tasks. No history."""
+    try:
+        response = _client.models.generate_content(
+            model=FALLBACK_MODELS[0],
+            contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+            config=types.GenerateContentConfig(
+                system_instruction=MODE_PROMPTS["default"],
+            ),
+        )
+        return (response.text or "").strip()
+    except Exception as exc:
+        raise GeminiError(str(exc)) from exc
 
 
 class GeminiError(Exception):

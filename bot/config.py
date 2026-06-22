@@ -1,6 +1,5 @@
 """
-Central configuration loaded from environment variables (.env in local dev,
-real environment variables on Render).
+Central configuration — environment variables (.env locally, real env on Render).
 """
 import os
 from dataclasses import dataclass, field
@@ -14,6 +13,15 @@ def _get_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _get_bool(name: str, default: bool = True) -> bool:
+    val = os.getenv(name, "").lower()
+    if val in ("false", "0", "no"):
+        return False
+    if val in ("true", "1", "yes"):
+        return True
+    return default
+
+
 def _get_list(name: str) -> list[int]:
     raw = os.getenv(name, "")
     result: list[int] = []
@@ -22,11 +30,7 @@ def _get_list(name: str) -> list[int]:
         if not x:
             continue
         if not x.lstrip("-").isdigit():
-            print(
-                f"[config] WARNING: ignoring invalid {name} entry '{x}' — "
-                "must be a numeric Telegram user ID, not a @username. "
-                "Get your numeric ID from @userinfobot on Telegram."
-            )
+            print(f"[config] WARNING: ignoring invalid {name} entry '{x}'")
             continue
         result.append(int(x))
     return result
@@ -34,53 +38,42 @@ def _get_list(name: str) -> list[int]:
 
 @dataclass(frozen=True)
 class Settings:
-    # Telegram
+    # ── Telegram ───────────────────────────────────────────────────────────
     bot_token: str = os.getenv("BOT_TOKEN", "")
 
-    # Gemini
+    # ── Gemini ─────────────────────────────────────────────────────────────
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    gemini_system_prompt: str = os.getenv(
-        "GEMINI_SYSTEM_PROMPT",
-        "You are a helpful, friendly AI assistant inside a Telegram bot. "
-        "Always reply in the same language the user used in their message. "
-        "If a message is too short or ambiguous to confidently detect the "
-        "language on its own (e.g. a one-word greeting that looks similar "
-        "across several Turkic languages like Azerbaijani, Uzbek, Turkish), "
-        "use the user's Telegram app language hint, if provided, to decide. "
-        "Keep answers concise and clear.",
-    )
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
-    # Supabase
+    # ── Supabase ───────────────────────────────────────────────────────────
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_key: str = os.getenv("SUPABASE_KEY", "")
 
-    # Limits
-    history_limit: int = field(default_factory=lambda: _get_int("HISTORY_LIMIT", 10))
+    # ── Limits ─────────────────────────────────────────────────────────────
+    history_limit: int = field(default_factory=lambda: _get_int("HISTORY_LIMIT", 15))
     free_daily_limit: int = field(default_factory=lambda: _get_int("FREE_DAILY_LIMIT", 20))
-    premium_daily_limit: int = field(default_factory=lambda: _get_int("PREMIUM_DAILY_LIMIT", 300))
+    premium_daily_limit: int = field(default_factory=lambda: _get_int("PREMIUM_DAILY_LIMIT", 500))
 
-    # Telegram Stars payment (currency code "XTR", no provider token needed)
+    # ── Payment ────────────────────────────────────────────────────────────
     stars_price: int = field(default_factory=lambda: _get_int("STARS_PRICE", 100))
     premium_duration_days: int = field(default_factory=lambda: _get_int("PREMIUM_DURATION_DAYS", 30))
 
-    # Admins
+    # ── Admins ─────────────────────────────────────────────────────────────
     admin_ids: list[int] = field(default_factory=lambda: _get_list("ADMIN_IDS"))
 
-    # Webhook (optional deployment mode)
+    # ── Webhook ────────────────────────────────────────────────────────────
     webhook_base_url: str = os.getenv("WEBHOOK_BASE_URL", "")
     webhook_path: str = os.getenv("WEBHOOK_PATH", "/webhook")
     port: int = field(default_factory=lambda: _get_int("PORT", 10000))
 
-    # Sentry (optional) — error tracking. Leave SENTRY_DSN empty to disable.
+    # ── Sentry ─────────────────────────────────────────────────────────────
     sentry_dsn: str = os.getenv("SENTRY_DSN", "")
     sentry_environment: str = os.getenv("SENTRY_ENVIRONMENT", "production")
 
-    # Streaming replies — "edits" the message as Gemini generates it.
-    # Set STREAMING_ENABLED=false to fall back to single-shot replies.
-    streaming_enabled: bool = field(
-        default_factory=lambda: os.getenv("STREAMING_ENABLED", "true").lower() not in ("false", "0", "no")
-    )
+    # ── Feature flags ──────────────────────────────────────────────────────
+    streaming_enabled: bool = field(default_factory=lambda: _get_bool("STREAMING_ENABLED", True))
+    inline_mode_enabled: bool = field(default_factory=lambda: _get_bool("INLINE_MODE_ENABLED", True))
+    premium_expiry_warning_days: int = field(default_factory=lambda: _get_int("PREMIUM_EXPIRY_WARNING_DAYS", 3))
 
     def validate(self) -> None:
         missing = [
