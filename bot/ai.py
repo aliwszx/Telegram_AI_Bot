@@ -1,6 +1,6 @@
 """
 Gemini API wrapper with:
-- Multi-model fallback (auto-switches when rate limited)
+- Single model: gemini-3.1-flash-lite (no fallback)
 - Image, audio, PDF/document support
 - Extended chat modes (10 personas)
 - Streaming support
@@ -22,23 +22,12 @@ logger = logging.getLogger(__name__)
 
 _client = genai.Client(api_key=settings.gemini_api_key)
 
-# Fallback chain — ordered by RPD (highest first)
-# gemini-3.1-flash-lite: 500 RPD, 15 RPM  ← primary
-# gemini-2.5-flash-lite: 20 RPD,  10 RPM
-# gemini-3-flash:        20 RPD,   5 RPM
-# gemini-3.5-flash:      20 RPD,   5 RPM
-# gemini-2.5-flash:      20 RPD,   5 RPM  ← ən sona
-FALLBACK_MODELS = [
-    settings.gemini_model,   # gemini-3.1-flash-lite (500 RPD — ən yüksək)
-    "gemini-2.5-flash-lite",
-    "gemini-3-flash",
-    "gemini-3.5-flash",
-    "gemini-2.5-flash",
-]
+# Yalnız bir model istifadə olunur — fallback yoxdur.
+MODEL = settings.gemini_model  # gemini-3.1-flash-lite
 
 # RPM aşımında eyni modeli yenidən cəhd etmək üçün maksimum gözləmə (saniyə)
 _RPM_RETRY_WAIT = 62   # 1 dəqiqə + 2 saniyə buffer
-_RPM_MAX_RETRIES = 2   # eyni model üçün maksimum RPM retry
+_RPM_MAX_RETRIES = 2   # maksimum RPM retry
 
 # ── Chat mode system prompts ───────────────────────────────────────────────
 
@@ -222,7 +211,7 @@ def generate_reply(
     web_search: bool = False,
 ) -> tuple[str, str]:
     """
-    Call Gemini with automatic model fallback.
+    Call Gemini (single model, no fallback).
     Returns: (reply_text, model_used)
     Raises GeminiError only if ALL models fail.
     """
@@ -233,88 +222,83 @@ def generate_reply(
     last_error: Exception | None = None
     last_was_rate_limit = False
 
-    for model in FALLBACK_MODELS:
-        transient_attempts = 0
-        rpm_retries = 0
-        while True:
-            try:
-                response = _client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                )
-                text = (response.text or "").strip()
-                if not text:
-                    raise GeminiError("Empty response from Gemini")
+    transient_attempts = 0
+    rpm_retries = 0
+    while True:
+        try:
+            response = _client.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=config,
+            )
+            text = (response.text or "").strip()
+            if not text:
+                raise GeminiError("Empty response from Gemini")
 
-                if model != FALLBACK_MODELS[0]:
-                    logger.warning("Used fallback model: %s", model)
+            return text, MODEL
 
-                return text, model
+        except GeminiError:
+            raise
 
-            except GeminiError:
-                raise
-
-            except Exception as exc:  # noqa: BLE001
-                if is_rate_limited(exc):
-                    # RPD dolubsa → bu modeli keç, gözləmə fayda verməz
-                    if is_daily_quota_exhausted(exc):
-                        logger.warning("Model %s daily quota exhausted, skipping. Error: %s", model, exc)
-                        last_error = exc
-                        last_was_rate_limit = True
-                        break
-
-                    # RPM aşımı → bir dəqiqə gözlə, eyni modeli yenidən cəhd et
-                    if rpm_retries < _RPM_MAX_RETRIES:
-                        rpm_retries += 1
-                        wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
-                        logger.warning(
-                            "Model %s RPM rate-limited (retry %s/%s), waiting %ss. Error: %s",
-                            model, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
-                        )
-                        last_error = exc
-                        last_was_rate_limit = True
-                        time.sleep(wait)
-                        continue  # eyni modeli yenidən cəhd et
-
-                    # RPM retry limitini keçdisə → növbəti modelə keç
-                    logger.warning("Model %s RPM retries exhausted, trying next. Error: %s", model, exc)
+        except Exception as exc:  # noqa: BLE001
+            if is_rate_limited(exc):
+                # RPD dolubsa → fayda verməz, dərhal xəta ver
+                if is_daily_quota_exhausted(exc):
+                    logger.warning("Model %s daily quota exhausted. Error: %s", MODEL, exc)
                     last_error = exc
                     last_was_rate_limit = True
                     break
 
-                if is_model_not_found(exc):
-                    logger.warning("Model %s not found, trying next.", model)
+                # RPM aşımı → bir dəqiqə gözlə, yenidən cəhd et
+                if rpm_retries < _RPM_MAX_RETRIES:
+                    rpm_retries += 1
+                    wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
+                    logger.warning(
+                        "Model %s RPM rate-limited (retry %s/%s), waiting %ss. Error: %s",
+                        MODEL, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
+                    )
+                    last_error = exc
+                    last_was_rate_limit = True
+                    time.sleep(wait)
+                    continue
+
+                logger.warning("Model %s RPM retries exhausted. Error: %s", MODEL, exc)
+                last_error = exc
+                last_was_rate_limit = True
+                break
+
+            if is_model_not_found(exc):
+                logger.error("Model %s not found. Error: %s", MODEL, exc)
+                last_error = exc
+                last_was_rate_limit = False
+                break
+
+            if is_transient(exc):
+                if transient_attempts < 2:
+                    transient_attempts += 1
+                    delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
+                    logger.warning(
+                        "Model %s transient error (attempt %s), retrying in %.1fs: %s",
+                        MODEL, transient_attempts, delay, exc,
+                    )
+                    last_error = exc
+                    last_was_rate_limit = False
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.warning("Model %s transient error exhausted retries. Error: %s", MODEL, exc)
                     last_error = exc
                     last_was_rate_limit = False
                     break
 
-                if is_transient(exc):
-                    if transient_attempts < 2:
-                        transient_attempts += 1
-                        delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
-                        logger.warning(
-                            "Model %s transient error (attempt %s), retrying in %.1fs: %s",
-                            model, transient_attempts, delay, exc,
-                        )
-                        last_error = exc
-                        last_was_rate_limit = False
-                        time.sleep(delay)
-                        continue
-                    else:
-                        logger.warning("Model %s transient error exhausted retries, trying next. Error: %s", model, exc)
-                        last_error = exc
-                        last_was_rate_limit = False
-                        break
-
-                raise GeminiError(str(exc)) from exc
+            raise GeminiError(str(exc)) from exc
 
     if last_was_rate_limit:
         raise GeminiRateLimitError(
-            f"All models rate-limited. Last error: {last_error}",
+            f"Model rate-limited. Last error: {last_error}",
             retry_after=_parse_retry_after(last_error),
         )
-    raise GeminiError(f"All models exhausted. Last error: {last_error}")
+    raise GeminiError(f"Model failed. Last error: {last_error}")
 
 
 def generate_reply_stream(
@@ -328,7 +312,7 @@ def generate_reply_stream(
 ):
     """
     Streaming version. Yields (text_piece, model, is_done) tuples.
-    Falls back to next model only if the FIRST chunk fails.
+    Single model, no fallback. Retries on transient/RPM errors.
     """
     contents = _build_contents(history, new_message, media_bytes, media_mime)
     system_instruction = _build_system_prompt(mode, language_hint)
@@ -337,106 +321,100 @@ def generate_reply_stream(
     last_error: Exception | None = None
     last_was_rate_limit = False
 
-    for model in FALLBACK_MODELS:
-        transient_attempts = 0
-        rpm_retries = 0
-        while True:
-            started = False
-            full_text = ""
-            try:
-                stream = _client.models.generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                )
-                for chunk in stream:
-                    piece = getattr(chunk, "text", None) or ""
-                    if piece:
-                        started = True
-                        full_text += piece
-                        yield piece, model, False
+    transient_attempts = 0
+    rpm_retries = 0
+    while True:
+        started = False
+        full_text = ""
+        try:
+            stream = _client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=config,
+            )
+            for chunk in stream:
+                piece = getattr(chunk, "text", None) or ""
+                if piece:
+                    started = True
+                    full_text += piece
+                    yield piece, MODEL, False
 
-                if not full_text.strip():
-                    raise GeminiError("Empty response from Gemini")
+            if not full_text.strip():
+                raise GeminiError("Empty response from Gemini")
 
-                if model != FALLBACK_MODELS[0]:
-                    logger.warning("Used fallback model (stream): %s", model)
+            yield "", MODEL, True
+            return
 
-                yield "", model, True
-                return
+        except GeminiError:
+            raise
 
-            except GeminiError:
-                raise
+        except Exception as exc:  # noqa: BLE001
+            if started:
+                raise GeminiError(str(exc)) from exc
 
-            except Exception as exc:  # noqa: BLE001
-                if started:
-                    raise GeminiError(str(exc)) from exc
-
-                if is_rate_limited(exc):
-                    # RPD dolubsa → bu modeli keç
-                    if is_daily_quota_exhausted(exc):
-                        logger.warning("Model %s daily quota exhausted (stream), skipping. Error: %s", model, exc)
-                        last_error = exc
-                        last_was_rate_limit = True
-                        break
-
-                    # RPM aşımı → gözlə, eyni modeli yenidən cəhd et
-                    if rpm_retries < _RPM_MAX_RETRIES:
-                        rpm_retries += 1
-                        wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
-                        logger.warning(
-                            "Model %s RPM rate-limited (stream, retry %s/%s), waiting %ss. Error: %s",
-                            model, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
-                        )
-                        last_error = exc
-                        last_was_rate_limit = True
-                        time.sleep(wait)
-                        continue
-
-                    logger.warning("Model %s RPM retries exhausted (stream), trying next. Error: %s", model, exc)
+            if is_rate_limited(exc):
+                if is_daily_quota_exhausted(exc):
+                    logger.warning("Model %s daily quota exhausted (stream). Error: %s", MODEL, exc)
                     last_error = exc
                     last_was_rate_limit = True
                     break
 
-                if is_model_not_found(exc):
-                    logger.warning("Model %s not found (stream), trying next.", model)
+                if rpm_retries < _RPM_MAX_RETRIES:
+                    rpm_retries += 1
+                    wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
+                    logger.warning(
+                        "Model %s RPM rate-limited (stream, retry %s/%s), waiting %ss. Error: %s",
+                        MODEL, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
+                    )
+                    last_error = exc
+                    last_was_rate_limit = True
+                    time.sleep(wait)
+                    continue
+
+                logger.warning("Model %s RPM retries exhausted (stream). Error: %s", MODEL, exc)
+                last_error = exc
+                last_was_rate_limit = True
+                break
+
+            if is_model_not_found(exc):
+                logger.error("Model %s not found (stream). Error: %s", MODEL, exc)
+                last_error = exc
+                last_was_rate_limit = False
+                break
+
+            if is_transient(exc):
+                if transient_attempts < 2:
+                    transient_attempts += 1
+                    delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
+                    logger.warning(
+                        "Model %s transient error (stream, attempt %s), retrying in %.1fs: %s",
+                        MODEL, transient_attempts, delay, exc,
+                    )
+                    last_error = exc
+                    last_was_rate_limit = False
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.warning("Model %s transient error exhausted retries (stream). Error: %s", MODEL, exc)
                     last_error = exc
                     last_was_rate_limit = False
                     break
 
-                if is_transient(exc):
-                    if transient_attempts < 2:
-                        transient_attempts += 1
-                        delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
-                        logger.warning(
-                            "Model %s transient error (stream, attempt %s), retrying in %.1fs: %s",
-                            model, transient_attempts, delay, exc,
-                        )
-                        last_error = exc
-                        last_was_rate_limit = False
-                        time.sleep(delay)
-                        continue
-                    else:
-                        logger.warning("Model %s transient error exhausted retries (stream), trying next. Error: %s", model, exc)
-                        last_error = exc
-                        last_was_rate_limit = False
-                        break
-
-                raise GeminiError(str(exc)) from exc
+            raise GeminiError(str(exc)) from exc
 
     if last_was_rate_limit:
         raise GeminiRateLimitError(
-            f"All models rate-limited. Last error: {last_error}",
+            f"Model rate-limited. Last error: {last_error}",
             retry_after=_parse_retry_after(last_error),
         )
-    raise GeminiError(f"All models exhausted. Last error: {last_error}")
+    raise GeminiError(f"Model failed. Last error: {last_error}")
 
 
 def generate_quick_reply(prompt: str) -> str:
     """Single-shot generation for inline mode and quick tasks. No history."""
     try:
         response = _client.models.generate_content(
-            model=FALLBACK_MODELS[0],
+            model=MODEL,
             contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
             config=types.GenerateContentConfig(
                 system_instruction=MODE_PROMPTS["default"],
@@ -452,7 +430,7 @@ class GeminiError(Exception):
 
 
 class GeminiRateLimitError(GeminiError):
-    """Raised when every model in the fallback chain is rate-limited."""
+    """Raised when the model is rate-limited."""
 
     def __init__(self, message: str, retry_after: int = 30) -> None:
         super().__init__(message)

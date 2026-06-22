@@ -58,7 +58,7 @@ Gemini AI ilə işləyən tam professional Telegram botu.
 - 🔍 User axtarış + plan idarəsi
 
 ### 🚀 Performance
-- **Multi-model fallback**: Rate limit-də avtomatik başqa modela keçir
+- **Tək model**: gemini-3.1-flash-lite (fallback yoxdur)
 - **Streaming**: Real-time cavab göstərilməsi
 - **Redis cache**: Opsional sürətlənmə
 - **PostgreSQL RPC**: Hər AI mesajı üçün 1 DB sorğusu (3 əvəzinə)
@@ -107,7 +107,7 @@ python main_webhook.py
 ```
 ├── bot/
 │   ├── __init__.py
-│   ├── ai.py          # Gemini AI wrapper (10 rejim, streaming, fallback)
+│   ├── ai.py          # Gemini AI wrapper (10 rejim, streaming)
 │   ├── cache.py       # Redis cache (opsional)
 │   ├── config.py      # Bütün ayarlar
 │   ├── db.py          # Supabase DB qatı
