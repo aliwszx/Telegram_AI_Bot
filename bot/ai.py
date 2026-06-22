@@ -16,25 +16,29 @@ from google import genai
 from google.genai import types
 
 from bot.config import settings
-from bot.retry import is_rate_limited, is_transient, is_model_not_found
+from bot.retry import is_rate_limited, is_transient, is_model_not_found, is_daily_quota_exhausted
 
 logger = logging.getLogger(__name__)
 
 _client = genai.Client(api_key=settings.gemini_api_key)
 
-# Fallback chain — ordered by stability and quota
-# gemini-2.5-flash-lite: stable GA model, highest free quota  ← primary
-# gemini-3.1-flash-lite: preview model, lower rate limits
-# gemini-3-flash:        stable
-# gemini-3.5-flash:      stable
-# gemini-2.5-flash:      ən sona (daha bahalı)
+# Fallback chain — ordered by RPD (highest first)
+# gemini-3.1-flash-lite: 500 RPD, 15 RPM  ← primary
+# gemini-2.5-flash-lite: 20 RPD,  10 RPM
+# gemini-3-flash:        20 RPD,   5 RPM
+# gemini-3.5-flash:      20 RPD,   5 RPM
+# gemini-2.5-flash:      20 RPD,   5 RPM  ← ən sona
 FALLBACK_MODELS = [
-    "gemini-2.5-flash-lite",        # stable GA, ən yüksək free quota
-    settings.gemini_model,          # gemini-3.1-flash-lite (preview, limit az)
+    settings.gemini_model,   # gemini-3.1-flash-lite (500 RPD — ən yüksək)
+    "gemini-2.5-flash-lite",
     "gemini-3-flash",
     "gemini-3.5-flash",
     "gemini-2.5-flash",
 ]
+
+# RPM aşımında eyni modeli yenidən cəhd etmək üçün maksimum gözləmə (saniyə)
+_RPM_RETRY_WAIT = 62   # 1 dəqiqə + 2 saniyə buffer
+_RPM_MAX_RETRIES = 2   # eyni model üçün maksimum RPM retry
 
 # ── Chat mode system prompts ───────────────────────────────────────────────
 
@@ -231,6 +235,7 @@ def generate_reply(
 
     for model in FALLBACK_MODELS:
         transient_attempts = 0
+        rpm_retries = 0
         while True:
             try:
                 response = _client.models.generate_content(
@@ -252,10 +257,30 @@ def generate_reply(
 
             except Exception as exc:  # noqa: BLE001
                 if is_rate_limited(exc):
-                    logger.warning("Model %s rate-limited, trying next. Error: %s", model, exc)
+                    # RPD dolubsa → bu modeli keç, gözləmə fayda verməz
+                    if is_daily_quota_exhausted(exc):
+                        logger.warning("Model %s daily quota exhausted, skipping. Error: %s", model, exc)
+                        last_error = exc
+                        last_was_rate_limit = True
+                        break
+
+                    # RPM aşımı → bir dəqiqə gözlə, eyni modeli yenidən cəhd et
+                    if rpm_retries < _RPM_MAX_RETRIES:
+                        rpm_retries += 1
+                        wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
+                        logger.warning(
+                            "Model %s RPM rate-limited (retry %s/%s), waiting %ss. Error: %s",
+                            model, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
+                        )
+                        last_error = exc
+                        last_was_rate_limit = True
+                        time.sleep(wait)
+                        continue  # eyni modeli yenidən cəhd et
+
+                    # RPM retry limitini keçdisə → növbəti modelə keç
+                    logger.warning("Model %s RPM retries exhausted, trying next. Error: %s", model, exc)
                     last_error = exc
                     last_was_rate_limit = True
-                    time.sleep(0.3)
                     break
 
                 if is_model_not_found(exc):
@@ -314,6 +339,7 @@ def generate_reply_stream(
 
     for model in FALLBACK_MODELS:
         transient_attempts = 0
+        rpm_retries = 0
         while True:
             started = False
             full_text = ""
@@ -347,10 +373,29 @@ def generate_reply_stream(
                     raise GeminiError(str(exc)) from exc
 
                 if is_rate_limited(exc):
-                    logger.warning("Model %s rate-limited (stream), trying next. Error: %s", model, exc)
+                    # RPD dolubsa → bu modeli keç
+                    if is_daily_quota_exhausted(exc):
+                        logger.warning("Model %s daily quota exhausted (stream), skipping. Error: %s", model, exc)
+                        last_error = exc
+                        last_was_rate_limit = True
+                        break
+
+                    # RPM aşımı → gözlə, eyni modeli yenidən cəhd et
+                    if rpm_retries < _RPM_MAX_RETRIES:
+                        rpm_retries += 1
+                        wait = _parse_retry_after(exc, default=_RPM_RETRY_WAIT)
+                        logger.warning(
+                            "Model %s RPM rate-limited (stream, retry %s/%s), waiting %ss. Error: %s",
+                            model, rpm_retries, _RPM_MAX_RETRIES, wait, exc,
+                        )
+                        last_error = exc
+                        last_was_rate_limit = True
+                        time.sleep(wait)
+                        continue
+
+                    logger.warning("Model %s RPM retries exhausted (stream), trying next. Error: %s", model, exc)
                     last_error = exc
                     last_was_rate_limit = True
-                    time.sleep(0.3)
                     break
 
                 if is_model_not_found(exc):
