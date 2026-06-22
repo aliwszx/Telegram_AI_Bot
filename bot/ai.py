@@ -1,10 +1,6 @@
 """
-Clean Gemini AI wrapper (production-ready)
-- Multi API key rotation (round-robin)
-- Model fallback chain
-- Retry with exponential backoff
-- Streaming support
-- Simple quick reply wrapper
+Gemini AI wrapper
+Stable production version
 """
 
 from __future__ import annotations
@@ -18,17 +14,20 @@ from google import genai
 from google.genai import types
 
 from bot.config import settings
-from bot.retry import is_rate_limited, is_transient, is_model_not_found
+from bot.retry import (
+    is_rate_limited,
+    is_transient,
+    is_model_not_found,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────
-# MODELS (BEST → FALLBACK)
-# ─────────────────────────────────────────────
+# =====================================================
+# MODELS
+# =====================================================
 
 MODELS = [
-    "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
     "gemini-3-flash",
     "gemini-2.5-flash",
@@ -37,163 +36,289 @@ MODELS = [
 ]
 
 
-# ─────────────────────────────────────────────
-# KEY ROTATION (SIMPLE ROUND ROBIN)
-# ─────────────────────────────────────────────
+# =====================================================
+# ERRORS
+# =====================================================
+
+class GeminiError(Exception):
+    pass
+
+
+class GeminiRateLimitError(GeminiError):
+
+    def __init__(self, message: str, retry_after: int = 30):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# =====================================================
+# KEY ROTATION
+# =====================================================
 
 class KeyManager:
-    def __init__(self, api_keys: list[str]):
-        self.clients = [genai.Client(api_key=k) for k in api_keys if k]
-        if not self.clients:
-            raise ValueError("No Gemini API keys provided")
 
-        self._cycle = itertools.cycle(self.clients)
+    def __init__(self, keys: list[str]):
 
-    def next_client(self) -> genai.Client:
-        return next(self._cycle)
+        keys = [k for k in keys if k]
+
+        if not keys:
+            raise GeminiError(
+                "No Gemini API keys configured"
+            )
+
+        self.clients = [
+            genai.Client(api_key=k)
+            for k in keys
+        ]
+
+        self.pool = itertools.cycle(self.clients)
+
+
+    def next(self):
+        return next(self.pool)
+
 
 
 key_manager = KeyManager(
-    settings.gemini_api_keys or [settings.gemini_api_key]
+    settings.gemini_api_keys
+    or [settings.gemini_api_key]
 )
 
 
-# ─────────────────────────────────────────────
-# CORE BUILDER
-# ─────────────────────────────────────────────
 
-def build_contents(history: list[dict], new_message: str):
+# =====================================================
+# CONTENT BUILDER
+# =====================================================
+
+def _build_contents(
+    history: list[dict],
+    message: str,
+):
+
     contents = []
 
-    for msg in history:
-        role = "user" if msg["role"] != "assistant" else "model"
+
+    for item in history:
+
         contents.append(
             types.Content(
-                role=role,
-                parts=[types.Part(text=msg["content"])],
+                role=(
+                    "model"
+                    if item["role"] == "assistant"
+                    else "user"
+                ),
+                parts=[
+                    types.Part(
+                        text=item["content"]
+                    )
+                ],
             )
         )
 
-    contents.append(
-        types.Content(
-            role="user",
-            parts=[types.Part(text=new_message)],
+
+    if message:
+
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        text=message
+                    )
+                ],
+            )
         )
-    )
+
 
     return contents
 
 
-# ─────────────────────────────────────────────
-# MAIN GENERATION
-# ─────────────────────────────────────────────
+
+# =====================================================
+# NORMAL GENERATE
+# =====================================================
 
 def generate_reply(
     history: list[dict],
     new_message: str,
-    system_prompt: str = "You are a helpful assistant",
-) -> tuple[str, str]:
-    """
-    Returns: (text, model_used)
-    """
+    system_prompt: str = (
+        "You are a helpful AI assistant. "
+        "Reply in the user's language."
+    ),
+):
 
-    contents = build_contents(history, new_message)
+    contents = _build_contents(
+        history,
+        new_message
+    )
+
 
     last_error = None
 
+
     for model in MODELS:
-        client = key_manager.next_client()
+
+        client = key_manager.next()
+
 
         for attempt in range(3):
+
             try:
+
                 response = client.models.generate_content(
                     model=model,
                     contents=contents,
                     config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
+                        system_instruction=system_prompt
                     ),
                 )
 
-                text = (response.text or "").strip()
+
+                text = (
+                    response.text or ""
+                ).strip()
+
 
                 if text:
+
                     return text, model
 
-                raise RuntimeError("Empty response")
+
 
             except Exception as e:
+
                 last_error = e
 
-                if is_model_not_found(e):
-                    break  # try next model
 
-                if is_transient(e):
-                    time.sleep(0.5 * (2 ** attempt))
-                    continue
+                if is_model_not_found(e):
+                    break
+
 
                 if is_rate_limited(e):
-                    time.sleep(2 * (attempt + 1))
+
+                    if attempt == 2:
+                        break
+
+                    time.sleep(
+                        2 * (attempt + 1)
+                    )
                     continue
 
-                break  # unknown error → next model
 
-    raise RuntimeError(f"All models failed: {last_error}")
+                if is_transient(e):
+
+                    time.sleep(
+                        0.5 * (2 ** attempt)
+                    )
+                    continue
 
 
-# ─────────────────────────────────────────────
-# STREAMING
-# ─────────────────────────────────────────────
+                break
+
+
+
+    raise GeminiRateLimitError(
+        f"All Gemini models failed: {last_error}"
+    )
+
+
+
+# =====================================================
+# STREAM
+# =====================================================
 
 def generate_reply_stream(
     history: list[dict],
     new_message: str,
-    system_prompt: str = "You are a helpful assistant",
+    system_prompt: str = (
+        "You are a helpful AI assistant."
+    ),
 ) -> Iterator[tuple[str, str, bool]]:
-    """
-    Yields: (text_chunk, model, is_done)
-    """
 
-    contents = build_contents(history, new_message)
+
+    contents = _build_contents(
+        history,
+        new_message
+    )
+
 
     for model in MODELS:
-        client = key_manager.next_client()
+
+        client = key_manager.next()
+
 
         try:
-            stream = client.models.generate_content_stream(
-                model=model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                ),
+
+            stream = (
+                client.models
+                .generate_content_stream(
+                    model=model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt
+                    ),
+                )
             )
 
-            for chunk in stream:
-                piece = getattr(chunk, "text", "") or ""
-                if piece:
-                    yield piece, model, False
 
-            yield "", model, True
+            for chunk in stream:
+
+                text = (
+                    getattr(chunk, "text", "")
+                    or ""
+                )
+
+
+                if text:
+
+                    yield (
+                        text,
+                        model,
+                        False
+                    )
+
+
+            yield (
+                "",
+                model,
+                True
+            )
+
             return
 
+
+
         except Exception as e:
+
             if is_model_not_found(e):
                 continue
+
             if is_rate_limited(e):
                 time.sleep(2)
                 continue
+
+
             continue
 
-    raise RuntimeError("All models failed")
 
 
-# ─────────────────────────────────────────────
-# QUICK REPLY (FIX FOR YOUR HANDLERS)
-# ─────────────────────────────────────────────
+    raise GeminiRateLimitError(
+        "Stream failed for all models"
+    )
 
-def generate_quick_reply(prompt: str) -> str:
-    """
-    Simple wrapper for single prompt calls.
-    Keeps handlers.py compatible.
-    """
-    text, _ = generate_reply([], prompt)
+
+
+# =====================================================
+# QUICK REPLY
+# =====================================================
+
+def generate_quick_reply(
+    prompt: str
+) -> str:
+
+    text, _ = generate_reply(
+        history=[],
+        new_message=prompt,
+    )
+
     return text
