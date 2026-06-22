@@ -129,6 +129,40 @@ _rotation = _RotationManager()
 _RPM_RETRY_WAIT = 65
 _RPM_MAX_RETRIES = 3
 
+# ── Global RPM throttle (max 15 req/min = 1 req/4s) ────────────────────────
+
+class _RpmThrottle:
+    """
+    Token-bucket throttle capped at MAX_RPM requests per 60 seconds.
+    Thread-safe. Blocks the caller if budget is exhausted.
+    """
+
+    def __init__(self, max_rpm: int = 14) -> None:
+        # Use 14 instead of 15 to keep a 1-request safety margin
+        self._max_rpm = max_rpm
+        self._lock = threading.Lock()
+        self._timestamps: list[float] = []   # rolling window of sent requests
+
+    def acquire(self) -> None:
+        """Block until a request slot is available within the current 60-s window."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                # Discard timestamps older than 60 seconds
+                self._timestamps = [t for t in self._timestamps if now - t < 60.0]
+                if len(self._timestamps) < self._max_rpm:
+                    self._timestamps.append(now)
+                    return
+                # Calculate how long until the oldest slot expires
+                oldest = self._timestamps[0]
+                wait_time = 60.0 - (now - oldest) + 0.05  # small buffer
+
+            logger.info("RPM throttle: %d/%d slots used, sleeping %.1fs", len(self._timestamps), self._max_rpm, wait_time)
+            time.sleep(wait_time)
+
+
+_rpm_throttle = _RpmThrottle(max_rpm=14)
+
 # ── Chat mode system prompts ───────────────────────────────────────────────
 
 MODE_PROMPTS: dict[str, str] = {
@@ -323,6 +357,9 @@ def generate_reply(
     transient_attempts = 0
     attempted: set[tuple[str, str]] = set()  # (key_suffix, model) cütlükləri
 
+    # Global RPM limitini aşmamaq üçün slot gözlə
+    _rpm_throttle.acquire()
+
     while True:
         client, model = _rotation.get_client_and_model()
         key_id = id(client)
@@ -406,6 +443,9 @@ def generate_reply_stream(
     rpm_retries = 0
     transient_attempts = 0
     attempted: set[tuple[str, str]] = set()
+
+    # Global RPM limitini aşmamaq üçün slot gözlə
+    _rpm_throttle.acquire()
 
     while True:
         client, model = _rotation.get_client_and_model()

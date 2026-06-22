@@ -50,6 +50,26 @@ router = Router(name="main")
 # In-memory cache of last failed request per user (for retry button)
 _last_failed: dict[int, dict] = {}
 
+# Per-user lock: prevent the same user from sending multiple concurrent requests
+# (avoids RPM spike from double-tap or impatient re-sends)
+_user_locks: dict[int, asyncio.Lock] = {}
+_user_locks_meta: dict[int, float] = {}  # last-used timestamp for GC
+_user_locks_lock = asyncio.Lock()
+
+async def _get_user_lock(user_id: int) -> asyncio.Lock:
+    async with _user_locks_lock:
+        _user_locks_meta[user_id] = time.monotonic()
+        if user_id not in _user_locks:
+            _user_locks[user_id] = asyncio.Lock()
+        # Periodic GC: remove locks not used in the last 10 minutes
+        if len(_user_locks) > 500:
+            cutoff = time.monotonic() - 600
+            stale = [uid for uid, ts in _user_locks_meta.items() if ts < cutoff]
+            for uid in stale:
+                _user_locks.pop(uid, None)
+                _user_locks_meta.pop(uid, None)
+        return _user_locks[user_id]
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _capture(exc: Exception) -> None:
@@ -1032,91 +1052,101 @@ async def _handle_ai_message(
 ) -> None:
     user = target_user or message.from_user
 
-    try:
-        ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
-    except Exception as exc:
-        logger.exception("DB error for user %s: %s", user.id, exc)
-        _capture(exc)
-        await message.answer("😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.")
-        return
-
-    if not ctx["allowed"]:
-        limit = ctx["limit"]
+    # Per-user lock: skip duplicate request if user is already being processed
+    lock = await _get_user_lock(user.id)
+    if lock.locked():
         await message.answer(
-            f"⛔ <b>Günlük limit bitdi</b> ({limit}/{limit} mesaj)\n\n"
-            "Seçimlər:\n"
-            "• Sabah limiti sıfırlanır\n"
-            "• /upgrade ilə premium al (500 mesaj/gün)\n"
-            "• /invite ilə dost dəvət et (bonus mesaj)",
-            parse_mode="HTML",
-            reply_markup=_upgrade_keyboard(),
+            "⏳ Əvvəlki sorğun hələ cavablanır, bir az gözlə...",
         )
         return
 
-    await message.bot.send_chat_action(message.chat.id, "typing")
+    async with lock:
 
-    history   = ctx["history"]
-    mode      = ctx.get("chat_mode") or "default"
-    usage     = ctx["usage"]
-    limit     = ctx["limit"]
-    web_search = ctx.get("web_search", False)
-    # usage is already incremented by check_usage_and_get_history, so remaining is correct
-    remaining = max(limit - usage, 0)
+        try:
+            ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
+        except Exception as exc:
+            logger.exception("DB error for user %s: %s", user.id, exc)
+            _capture(exc)
+            await message.answer("😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.")
+            return
 
-    try:
-        if settings.streaming_enabled:
-            reply_text, model_used = await _stream_ai_reply(
-                message, history, user_text, user.language_code, mode,
-                media_bytes, media_mime, web_search,
+        if not ctx["allowed"]:
+            limit = ctx["limit"]
+            await message.answer(
+                f"⛔ <b>Günlük limit bitdi</b> ({limit}/{limit} mesaj)\n\n"
+                "Seçimlər:\n"
+                "• Sabah limiti sıfırlanır\n"
+                "• /upgrade ilə premium al (500 mesaj/gün)\n"
+                "• /invite ilə dost dəvət et (bonus mesaj)",
+                parse_mode="HTML",
+                reply_markup=_upgrade_keyboard(),
             )
-        else:
-            reply_text, model_used = await asyncio.to_thread(
-                generate_reply,
-                history, user_text, user.language_code, mode,
-                media_bytes, media_mime, web_search,
+            return
+
+        await message.bot.send_chat_action(message.chat.id, "typing")
+
+        history   = ctx["history"]
+        mode      = ctx.get("chat_mode") or "default"
+        usage     = ctx["usage"]
+        limit     = ctx["limit"]
+        web_search = ctx.get("web_search", False)
+        # usage is already incremented by check_usage_and_get_history, so remaining is correct
+        remaining = max(limit - usage, 0)
+
+        try:
+            if settings.streaming_enabled:
+                reply_text, model_used = await _stream_ai_reply(
+                    message, history, user_text, user.language_code, mode,
+                    media_bytes, media_mime, web_search,
+                )
+            else:
+                reply_text, model_used = await asyncio.to_thread(
+                    generate_reply,
+                    history, user_text, user.language_code, mode,
+                    media_bytes, media_mime, web_search,
+                )
+        except GeminiRateLimitError as exc:
+            logger.warning("Gemini rate-limited for user %s: %s", user.id, exc)
+            _capture(exc)
+            _last_failed[user.id] = {
+                "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
+            }
+            await message.answer(
+                f"⏳ <b>AI yüklənib</b>\n"
+                f"<b>{exc.retry_after} saniyə</b> sonra yenidən cəhd et.",
+                parse_mode="HTML",
+                reply_markup=_retry_keyboard(),
             )
-    except GeminiRateLimitError as exc:
-        logger.warning("Gemini rate-limited for user %s: %s", user.id, exc)
-        _capture(exc)
-        _last_failed[user.id] = {
-            "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
-        }
-        await message.answer(
-            f"⏳ <b>AI yüklənib</b>\n"
-            f"<b>{exc.retry_after} saniyə</b> sonra yenidən cəhd et.",
-            parse_mode="HTML",
-            reply_markup=_retry_keyboard(),
+            return
+        except GeminiError as exc:
+            logger.exception("Gemini error for user %s: %s", user.id, exc)
+            _capture(exc)
+            _last_failed[user.id] = {
+                "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
+            }
+            await message.answer(
+                "😕 AI cavab verə bilmədi. Bir az sonra yenidən cəhd et.",
+                reply_markup=_retry_keyboard(),
+            )
+            return
+
+        # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
+        history_label = user_text if user_text else "[media]"
+
+        await asyncio.gather(
+            asyncio.to_thread(db.save_message, user.id, "user", history_label),
+            asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
         )
-        return
-    except GeminiError as exc:
-        logger.exception("Gemini error for user %s: %s", user.id, exc)
-        _capture(exc)
-        _last_failed[user.id] = {
-            "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
-        }
-        await message.answer(
-            "😕 AI cavab verə bilmədi. Bir az sonra yenidən cəhd et.",
-            reply_markup=_retry_keyboard(),
-        )
-        return
 
-    # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
-    history_label = user_text if user_text else "[media]"
+        from bot import cache as redis_cache
+        await redis_cache.invalidate_user(user.id)
 
-    await asyncio.gather(
-        asyncio.to_thread(db.save_message, user.id, "user", history_label),
-        asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
-    )
-
-    from bot import cache as redis_cache
-    await redis_cache.invalidate_user(user.id)
-
-    if remaining <= 3:
-        await message.answer(
-            f"ℹ️ Bugün üçün qalan limit: <b>{remaining}/{limit}</b>\n"
-            "💡 /upgrade ilə Premium al — 500 mesaj/gün!",
-            parse_mode="HTML",
-        )
+        if remaining <= 3:
+            await message.answer(
+                f"ℹ️ Bugün üçün qalan limit: <b>{remaining}/{limit}</b>\n"
+                "💡 /upgrade ilə Premium al — 500 mesaj/gün!",
+                parse_mode="HTML",
+            )
 
 
 # ── Text messages ──────────────────────────────────────────────────────────
