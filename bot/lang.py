@@ -275,6 +275,19 @@ AZ: dict[str, str] = {
     "admin_clear_done":         "🗑 {count} mesaj silindi",
     "admin_bonus_done":         "🎁 +10 bonus mesaj verildi!",
 
+    # ── Top row line ──────────────────────────────────────────────────────────
+    "top_row":    "{medal} {name} {plan_icon} — {usage} mesaj",
+
+    # ── Status inline (callback) ──────────────────────────────────────────────
+    "status_today":        "📊 Bugün: {used}/{limit} [{bar}]",
+    "status_until_short":  "📅 Bitmə: {date}",
+
+    # ── Mode list row ─────────────────────────────────────────────────────────
+    "mode_row":   "{check} {name} — {desc}",
+
+    # ── Inline result message ─────────────────────────────────────────────────
+    "inline_result_msg": "❓ <b>{query}</b>\n\n🤖 {reply}",
+
     # ── Guest name ────────────────────────────────────────────────────────────
     "guest_name": "Qonaq",
 }
@@ -529,6 +542,12 @@ EN: dict[str, str] = {
     "admin_grant_free_done":    "🆓 Switched to free plan",
     "admin_clear_done":         "🗑 {count} messages deleted",
     "admin_bonus_done":         "🎁 +10 bonus messages granted!",
+
+    "top_row":             "{medal} {name} {plan_icon} — {usage} messages",
+    "status_today":        "📊 Today: {used}/{limit} [{bar}]",
+    "status_until_short":  "📅 Expires: {date}",
+    "mode_row":            "{check} {name} — {desc}",
+    "inline_result_msg":   "❓ <b>{query}</b>\n\n🤖 {reply}",
 
     "guest_name": "Guest",
 }
