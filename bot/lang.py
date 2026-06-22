@@ -569,5 +569,33 @@ def t(key: str, lang: str | None = None, **kwargs) -> str:
     """
     lng = lang or DEFAULT_LANG
     table = _LANGUAGES.get(lng) or _LANGUAGES.get(DEFAULT_LANG) or EN
+
+# ── AI Modes ─────────────────────────────────────────────────────────────────
+
+MODE_NAMES = {
+    "default": "🤖 Standart",
+    "teacher": "📚 Müəllim",
+    "coder": "💻 Proqramçı",
+    "friend": "😊 Dost",
+    "translator": "🌐 Tərcüməçi",
+    "writer": "✍️ Yazıçı",
+    "analyst": "📊 Analitik",
+    "creative": "🎨 Kreativ",
+    "fitness": "💪 Fitnes",
+    "chef": "👨‍🍳 Aşpaz",
+}
+
+MODE_DESCRIPTIONS = {
+    "default": "Normal AI köməkçi",
+    "teacher": "Addım-addım izah edir",
+    "coder": "Kod yazır və debug edir",
+    "friend": "Səmimi danışır",
+    "translator": "Tərcümə edir",
+    "writer": "Mətn yaradır",
+    "analyst": "Analiz edir",
+    "creative": "İdeyalar verir",
+    "fitness": "Məşq köməkçisi",
+    "chef": "Yemək köməkçisi",
+}
     text = table.get(key) or EN.get(key) or key
     return text.format(**kwargs) if kwargs else text
