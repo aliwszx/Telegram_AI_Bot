@@ -9,7 +9,7 @@ Features:
 - Retry
 - Telegram handler compatible
 """
-from bot.lang import MODE_NAMES, MODE_DESCRIPTIONS
+
 from __future__ import annotations
 
 import itertools
@@ -22,7 +22,7 @@ from google import genai
 from google.genai import types
 
 from bot.config import settings
-
+from bot.lang import MODE_NAMES, MODE_DESCRIPTIONS
 
 logger = logging.getLogger(__name__)
 
