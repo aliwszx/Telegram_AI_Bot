@@ -1,9 +1,10 @@
 """
-Clean Gemini API wrapper:
-- No blacklist system
-- Smart retry with exponential backoff
+Clean Gemini AI wrapper (production-ready)
+- Multi API key rotation (round-robin)
 - Model fallback chain
-- Multi-key support (simple round-robin)
+- Retry with exponential backoff
+- Streaming support
+- Simple quick reply wrapper
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import itertools
 import time
 import logging
 from typing import Iterator
-from dataclasses import dataclass
 
 from google import genai
 from google.genai import types
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# MODELS (CLEAN + CORRECT NAMES)
+# MODELS (BEST → FALLBACK)
 # ─────────────────────────────────────────────
 
 MODELS = [
@@ -36,8 +36,6 @@ MODELS = [
     "gemini-2-flash",
 ]
 
-# fallback safety order (best → weakest)
-
 
 # ─────────────────────────────────────────────
 # KEY ROTATION (SIMPLE ROUND ROBIN)
@@ -45,27 +43,33 @@ MODELS = [
 
 class KeyManager:
     def __init__(self, api_keys: list[str]):
-        self.clients = [genai.Client(api_key=k) for k in api_keys]
+        self.clients = [genai.Client(api_key=k) for k in api_keys if k]
+        if not self.clients:
+            raise ValueError("No Gemini API keys provided")
+
         self._cycle = itertools.cycle(self.clients)
 
     def next_client(self) -> genai.Client:
         return next(self._cycle)
 
 
-key_manager = KeyManager(settings.gemini_api_keys or [settings.gemini_api_key])
+key_manager = KeyManager(
+    settings.gemini_api_keys or [settings.gemini_api_key]
+)
 
 
 # ─────────────────────────────────────────────
-# HELPERS
+# CORE BUILDER
 # ─────────────────────────────────────────────
 
-def build_contents(history, new_message):
+def build_contents(history: list[dict], new_message: str):
     contents = []
 
     for msg in history:
+        role = "user" if msg["role"] != "assistant" else "model"
         contents.append(
             types.Content(
-                role="user" if msg["role"] != "assistant" else "model",
+                role=role,
                 parts=[types.Part(text=msg["content"])],
             )
         )
@@ -84,7 +88,15 @@ def build_contents(history, new_message):
 # MAIN GENERATION
 # ─────────────────────────────────────────────
 
-def generate_reply(history, new_message, system_prompt: str = "You are a helpful assistant"):
+def generate_reply(
+    history: list[dict],
+    new_message: str,
+    system_prompt: str = "You are a helpful assistant",
+) -> tuple[str, str]:
+    """
+    Returns: (text, model_used)
+    """
+
     contents = build_contents(history, new_message)
 
     last_error = None
@@ -92,25 +104,28 @@ def generate_reply(history, new_message, system_prompt: str = "You are a helpful
     for model in MODELS:
         client = key_manager.next_client()
 
-        for attempt in range(3):  # retry per model
+        for attempt in range(3):
             try:
                 response = client.models.generate_content(
                     model=model,
                     contents=contents,
                     config=types.GenerateContentConfig(
-                        system_instruction=system_prompt
+                        system_instruction=system_prompt,
                     ),
                 )
 
                 text = (response.text or "").strip()
+
                 if text:
                     return text, model
+
+                raise RuntimeError("Empty response")
 
             except Exception as e:
                 last_error = e
 
                 if is_model_not_found(e):
-                    break  # skip this model
+                    break  # try next model
 
                 if is_transient(e):
                     time.sleep(0.5 * (2 ** attempt))
@@ -126,10 +141,18 @@ def generate_reply(history, new_message, system_prompt: str = "You are a helpful
 
 
 # ─────────────────────────────────────────────
-# STREAMING VERSION
+# STREAMING
 # ─────────────────────────────────────────────
 
-def generate_reply_stream(history, new_message, system_prompt: str = "You are a helpful assistant"):
+def generate_reply_stream(
+    history: list[dict],
+    new_message: str,
+    system_prompt: str = "You are a helpful assistant",
+) -> Iterator[tuple[str, str, bool]]:
+    """
+    Yields: (text_chunk, model, is_done)
+    """
+
     contents = build_contents(history, new_message)
 
     for model in MODELS:
@@ -140,7 +163,7 @@ def generate_reply_stream(history, new_message, system_prompt: str = "You are a 
                 model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_prompt
+                    system_instruction=system_prompt,
                 ),
             )
 
@@ -161,3 +184,16 @@ def generate_reply_stream(history, new_message, system_prompt: str = "You are a 
             continue
 
     raise RuntimeError("All models failed")
+
+
+# ─────────────────────────────────────────────
+# QUICK REPLY (FIX FOR YOUR HANDLERS)
+# ─────────────────────────────────────────────
+
+def generate_quick_reply(prompt: str) -> str:
+    """
+    Simple wrapper for single prompt calls.
+    Keeps handlers.py compatible.
+    """
+    text, _ = generate_reply([], prompt)
+    return text
