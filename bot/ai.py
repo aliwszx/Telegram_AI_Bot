@@ -9,7 +9,7 @@ Features:
 - Retry
 - Telegram handler compatible
 """
-
+from bot.lang import MODE_NAMES, MODE_DESCRIPTIONS
 from __future__ import annotations
 
 import itertools
@@ -31,32 +31,6 @@ logger = logging.getLogger(__name__)
 # MODES
 # ==========================
 
-MODE_NAMES = {
-    "default": "🤖 Standart",
-    "teacher": "📚 Müəllim",
-    "coder": "💻 Proqramçı",
-    "friend": "😊 Dost",
-    "translator": "🌐 Tərcüməçi",
-    "writer": "✍️ Yazıçı",
-    "analyst": "📊 Analitik",
-    "creative": "🎨 Kreativ",
-    "fitness": "💪 Fitnes",
-    "chef": "👨‍🍳 Aşpaz",
-}
-
-
-MODE_DESCRIPTIONS = {
-    "default": "Normal AI köməkçi",
-    "teacher": "Addım-addım izah edir",
-    "coder": "Kod yazır və debug edir",
-    "friend": "Səmimi danışır",
-    "translator": "Tərcümə edir",
-    "writer": "Mətn yaradır",
-    "analyst": "Analiz edir",
-    "creative": "İdeyalar verir",
-    "fitness": "Məşq köməkçisi",
-    "chef": "Yemək köməkçisi",
-}
 
 
 MODE_PROMPTS = {
