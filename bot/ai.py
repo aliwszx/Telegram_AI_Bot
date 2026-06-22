@@ -26,8 +26,8 @@ _client = genai.Client(api_key=settings.gemini_api_key)
 MODEL = settings.gemini_model  # gemini-3.1-flash-lite
 
 # RPM aşımında eyni modeli yenidən cəhd etmək üçün maksimum gözləmə (saniyə)
-_RPM_RETRY_WAIT = 62   # 1 dəqiqə + 2 saniyə buffer
-_RPM_MAX_RETRIES = 2   # maksimum RPM retry
+_RPM_RETRY_WAIT = 65   # 1 dəqiqə + 5 saniyə buffer
+_RPM_MAX_RETRIES = 4   # maksimum RPM retry (fallback olmadığı üçün daha çox cəhd)
 
 # ── Chat mode system prompts ───────────────────────────────────────────────
 

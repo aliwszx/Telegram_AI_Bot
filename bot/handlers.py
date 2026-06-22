@@ -1059,7 +1059,7 @@ async def _handle_ai_message(
     mode      = ctx.get("chat_mode") or "default"
     usage     = ctx["usage"]
     limit     = ctx["limit"]
-    web_search = ctx.get("web_search", True)
+    web_search = ctx.get("web_search", False)
     # usage is already incremented by check_usage_and_get_history, so remaining is correct
     remaining = max(limit - usage, 0)
 

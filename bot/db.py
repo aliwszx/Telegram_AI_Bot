@@ -108,7 +108,7 @@ def get_daily_limit(plan: Plan, bonus: int = 0) -> int:
 
 
 def get_web_search_enabled(user: dict) -> bool:
-    return user.get("web_search", True)
+    return user.get("web_search", False)
 
 
 @with_retry()
