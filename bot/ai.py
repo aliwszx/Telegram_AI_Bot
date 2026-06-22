@@ -30,8 +30,20 @@ class _KeyState:
     api_key: str
     exhausted_models: set[str] = field(default_factory=set)
     exhausted_until: float = 0.0   # RPM gözləmə zamanı
+    _quota_reset_day: int = field(default=-1, compare=False)  # UTC gün nömrəsi
+
+    def _maybe_reset_daily(self) -> None:
+        """Yeni UTC günü gəlibsə, daily blacklist-i sıfırla."""
+        import datetime
+        today = datetime.datetime.utcnow().toordinal()
+        if today != self._quota_reset_day:
+            if self.exhausted_models:
+                logger.info("Key ...%s: new UTC day — resetting daily quota blacklist.", self.api_key[-6:])
+                self.exhausted_models.clear()
+            self._quota_reset_day = today
 
     def is_exhausted(self, model: str) -> bool:
+        self._maybe_reset_daily()
         return model in self.exhausted_models
 
     def mark_daily_exhausted(self, model: str) -> None:
@@ -43,7 +55,6 @@ class _KeyState:
 
     def is_rpm_cooling(self) -> bool:
         return time.monotonic() < self.exhausted_until
-
 
 class _RotationManager:
     """
