@@ -296,7 +296,10 @@ async def cb_mode_select(callback: CallbackQuery) -> None:
         parse_mode="HTML",
     )
     await callback.answer(f"{MODE_NAMES[mode]} seçildi!")
-
+    await asyncio.to_thread(
+    db.clear_history,
+    callback.from_user.id
+)
 
 @router.callback_query(F.data.startswith("menu:"))
 async def cb_menu(callback: CallbackQuery) -> None:
