@@ -56,6 +56,35 @@ _user_locks: dict[int, asyncio.Lock] = {}
 _user_locks_meta: dict[int, float] = {}  # last-used timestamp for GC
 _user_locks_lock = asyncio.Lock()
 
+async def _should_respond_in_chat(message: Message) -> bool:
+    """
+    Private chat → always respond.
+    Group / supergroup → respond only when:
+      • bot is @mentioned in the text/caption, OR
+      • message is a reply to a bot message.
+    Channel posts are ignored.
+    """
+    chat_type = message.chat.type  # "private" | "group" | "supergroup" | "channel"
+    if chat_type == "private":
+        return True
+    if chat_type == "channel":
+        return False
+
+    # Group / supergroup: check mention or reply-to-bot
+    bot_info = await message.bot.get_me()
+    bot_username = (bot_info.username or "").lower()
+
+    text = message.text or message.caption or ""
+    if bot_username and f"@{bot_username}" in text.lower():
+        return True
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        if message.reply_to_message.from_user.id == bot_info.id:
+            return True
+
+    return False
+
+
 async def _get_user_lock(user_id: int) -> asyncio.Lock:
     async with _user_locks_lock:
         _user_locks_meta[user_id] = time.monotonic()
@@ -296,10 +325,7 @@ async def cb_mode_select(callback: CallbackQuery) -> None:
         parse_mode="HTML",
     )
     await callback.answer(f"{MODE_NAMES[mode]} seçildi!")
-    await asyncio.to_thread(
-    db.clear_history,
-    callback.from_user.id
-)
+    await asyncio.to_thread(db.clear_history, callback.from_user.id)
 
 @router.callback_query(F.data.startswith("menu:"))
 async def cb_menu(callback: CallbackQuery) -> None:
@@ -549,6 +575,42 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
         if sent else
         "✅ Rəyiniz qeydə alındı! Təşəkkür edirik 🙏"
     )
+
+
+@router.message(Command("remind"))
+async def cmd_remind(message: Message) -> None:
+    """Show premium expiry warning if applicable, else show subscription status."""
+    user = message.from_user
+    row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+    plan = await asyncio.to_thread(db.effective_plan, row)
+    days_left = db.days_until_premium_expires(row)
+
+    if plan != "premium":
+        await message.answer(
+            "ℹ️ Hazırda pulsuz planda istifadə edirsən.\n\n"
+            "⭐ Premium almaq üçün /upgrade yaz.",
+            reply_markup=_upgrade_keyboard(),
+        )
+        return
+
+    if days_left is None:
+        await message.answer("✅ Premium aktiv — bitmə tarixi məlum deyil.")
+        return
+
+    if days_left <= settings.premium_expiry_warning_days:
+        await message.answer(
+            f"⚠️ <b>Xatırlatma:</b> Premium abunəliyin <b>{days_left} gün</b> sonra bitir!\n\n"
+            "Uzatmaq üçün /upgrade yaz.",
+            parse_mode="HTML",
+            reply_markup=_upgrade_keyboard(),
+        )
+    else:
+        until = (row.get("premium_until") or "")[:10]
+        await message.answer(
+            f"✅ Premium aktiv — <b>{days_left} gün</b> qalıb.\n"
+            f"📅 Bitmə tarixi: {until}",
+            parse_mode="HTML",
+        )
 
 
 @router.message(Command("upgrade"))
@@ -1156,6 +1218,8 @@ async def _handle_ai_message(
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_ai_chat(message: Message) -> None:
+    if not await _should_respond_in_chat(message):
+        return
     user_text = message.text.strip()
     if not user_text:
         return
@@ -1166,6 +1230,8 @@ async def handle_ai_chat(message: Message) -> None:
 
 @router.message(F.photo)
 async def handle_photo(message: Message) -> None:
+    if not await _should_respond_in_chat(message):
+        return
     photo = message.photo[-1]
     caption = (message.caption or "").strip()
     prompt = caption if caption else "Bu şəkildə nə görürsən? Ətraflı izah et, nə varsa hamısını say."
@@ -1195,6 +1261,8 @@ MAX_DOC_SIZE_MB = 10
 
 @router.message(F.document)
 async def handle_document(message: Message) -> None:
+    if not await _should_respond_in_chat(message):
+        return
     doc = message.document
     mime = doc.mime_type or ""
     caption = (message.caption or "").strip()
@@ -1237,6 +1305,8 @@ async def handle_document(message: Message) -> None:
 
 @router.message(F.voice | F.audio)
 async def handle_voice(message: Message) -> None:
+    if not await _should_respond_in_chat(message):
+        return
     media = message.voice or message.audio
     mime = getattr(media, "mime_type", None) or "audio/ogg"
 
@@ -1262,6 +1332,8 @@ async def handle_voice(message: Message) -> None:
 
 @router.message(F.sticker)
 async def handle_sticker(message: Message) -> None:
+    if not await _should_respond_in_chat(message):
+        return
     emoji = message.sticker.emoji or "😊"
     prompt = (
         f"İstifadəçi sənə '{emoji}' emoji-li bir stiker göndərdi. "
