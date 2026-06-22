@@ -239,7 +239,7 @@ async def cmd_mode(message: Message) -> None:
     row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
     current = db.get_chat_mode(row)
     mode_list = "\n".join(
-        f"{'✅' if k == current else '▫️'} {v} — {MODE_DESCRIPTIONS[k]}"
+        t("mode_row", lang, check="✅" if k == current else "▫️", name=v, desc=MODE_DESCRIPTIONS[k])
         for k, v in MODE_NAMES.items()
     )
     await message.answer(
@@ -307,11 +307,11 @@ async def cb_menu(callback: CallbackQuery) -> None:
         lines = [
             t("status_plan", lang, emoji=plan_emoji, plan=plan.upper()),
             t("status_mode", lang, mode=MODE_NAMES.get(mode, mode)),
-            f"📊 Bugün: {used_today}/{limit} [{bar}]",
+            t("status_today", lang, used=used_today, limit=limit, bar=bar),
             t("status_remaining", lang, remaining=remaining),
         ]
         if plan == "premium" and row.get("premium_until"):
-            lines.append(f"📅 Bitmə: {row['premium_until'][:10]}")
+            lines.append(t("status_until_short", lang, date=row['premium_until'][:10]))
         await callback.message.edit_text(
             "\n".join(lines),
             reply_markup=_back_keyboard(lang),
@@ -457,7 +457,7 @@ async def _send_top(target: Message, lang=None) -> None:
     for i, u in enumerate(users):
         name = u.get("first_name") or u.get("username") or f"User {u['id']}"
         plan = "⭐" if u.get("plan") == "premium" else ""
-        lines.append(f"{medals[i]} {name} {plan} — {u.get('daily_usage', 0)} mesaj")
+        lines.append(t("top_row", lang, medal=medals[i], name=name, plan_icon=plan, usage=u.get('daily_usage', 0)))
 
     await target.answer("\n".join(lines), parse_mode="HTML")
 
@@ -863,7 +863,7 @@ async def handle_inline(inline_query: InlineQuery) -> None:
                 title=t("inline_result_title", lang),
                 description=reply[:100] + "..." if len(reply) > 100 else reply,
                 input_message_content=InputTextMessageContent(
-                    message_text=f"❓ <b>{query}</b>\n\n🤖 {reply}",
+                    message_text=t("inline_result_msg", lang, query=query, reply=reply),
                     parse_mode="HTML",
                 ),
             )
