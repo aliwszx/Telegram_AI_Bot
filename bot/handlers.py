@@ -38,6 +38,7 @@ from bot.ai import (
     MODE_NAMES, MODE_DESCRIPTIONS,
 )
 from bot.config import settings
+from bot.i18n import t
 
 try:
     import sentry_sdk
@@ -114,67 +115,39 @@ def _is_admin(user_id: int) -> bool:
 
 
 # ── Static texts ───────────────────────────────────────────────────────────
-
-WELCOME_TEXT = (
-    "👋 <b>Salam, {name}!</b>\n\n"
-    "Mən <b>Gemini AI</b> ilə işləyən güclü bir botam. 🚀\n\n"
-    "📝 <b>Nə edə bilərəm:</b>\n"
-    "• Suallarına cavab verəm\n"
-    "• Şəkil, səs, sənəd analiz edəm\n"
-    "• 10 fərqli rejimdə kömək edəm\n"
-    "• Real-time internet axtarışı aparam\n\n"
-    "Aşağıdakı düymələrdən başla 👇"
-)
-
-HELP_TEXT = (
-    "ℹ️ <b>İstifadə qaydası</b>\n\n"
-    "💬 <b>Mətn yaz</b> → AI cavab verir\n"
-    "🖼 <b>Şəkil göndər</b> → AI şəkili analiz edir\n"
-    "📄 <b>Sənəd/PDF göndər</b> → AI oxuyur və izah edir\n"
-    "🎙 <b>Səsli mesaj</b> → AI eşidir və cavab verir\n"
-    "😄 <b>Stiker göndər</b> → AI emosiyasını analiz edir\n\n"
-    "<b>Komandalar:</b>\n"
-    "/mode — 🎭 AI rejimini dəyiş (10 rejim)\n"
-    "/status — 📊 Plan və limit məlumatı\n"
-    "/clear — 🗑 Söhbəti sil\n"
-    "/export — 📤 Söhbəti fayl kimi yüklə\n"
-    "/search — 🌐 İnternet axtarışını aç/bağla\n"
-    "/invite — 🎁 Dost dəvət et, bonus qazan\n"
-    "/top — 🏆 Ən aktiv istifadəçilər\n"
-    "/feedback — 💌 Rəy/təklif göndər\n"
-    "/upgrade — ⭐ Premium al\n\n"
-    "💡 <b>Tip:</b> Botu başqa chatlarda da @botusername yazaraq istifadə edə bilərsən!"
-)
+# All UI strings are now served through bot.i18n.t(key, lang_code, **kwargs).
+# The constants below are kept only as legacy aliases for any external callers;
+# new code should call t() directly.
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────
 
-def _start_keyboard() -> InlineKeyboardMarkup:
+def _start_keyboard(lang: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎭 Rejim seç",    callback_data="menu:mode"),
-            InlineKeyboardButton(text="📊 Status",       callback_data="menu:status"),
+            InlineKeyboardButton(text=t("kb_mode", lang),    callback_data="menu:mode"),
+            InlineKeyboardButton(text=t("kb_status", lang),  callback_data="menu:status"),
         ],
         [
-            InlineKeyboardButton(text="🌐 İnternet",     callback_data="menu:search_toggle"),
-            InlineKeyboardButton(text="⭐ Premium",      callback_data="menu:upgrade"),
+            InlineKeyboardButton(text=t("kb_internet", lang),  callback_data="menu:search_toggle"),
+            InlineKeyboardButton(text=t("kb_premium", lang),   callback_data="menu:upgrade"),
         ],
         [
-            InlineKeyboardButton(text="🗑 Söhbəti sil",  callback_data="menu:clear"),
-            InlineKeyboardButton(text="📤 Export",       callback_data="menu:export"),
+            InlineKeyboardButton(text=t("kb_clear", lang),   callback_data="menu:clear"),
+            InlineKeyboardButton(text=t("kb_export", lang),  callback_data="menu:export"),
         ],
         [
-            InlineKeyboardButton(text="🎁 Dəvət et",    callback_data="menu:invite"),
-            InlineKeyboardButton(text="🏆 TOP",          callback_data="menu:top"),
+            InlineKeyboardButton(text=t("kb_invite", lang),  callback_data="menu:invite"),
+            InlineKeyboardButton(text=t("kb_top", lang),     callback_data="menu:top"),
         ],
         [
-            InlineKeyboardButton(text="ℹ️ Kömək",        callback_data="menu:help"),
-            InlineKeyboardButton(text="💌 Rəy ver",      callback_data="menu:feedback"),
+            InlineKeyboardButton(text=t("kb_help", lang),     callback_data="menu:help"),
+            InlineKeyboardButton(text=t("kb_feedback", lang), callback_data="menu:feedback"),
         ],
     ])
 
 
-def _mode_keyboard(current: str | None = None) -> InlineKeyboardMarkup:
+def _mode_keyboard(current: str | None = None, lang: str | None = None) -> InlineKeyboardMarkup:
     """Mode selection — 2 columns, checkmark on active."""
     mode_items = list(MODE_NAMES.items())
     buttons = []
@@ -187,26 +160,26 @@ def _mode_keyboard(current: str | None = None) -> InlineKeyboardMarkup:
                 callback_data=f"mode:{key}",
             ))
         buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="⬅️ Geri", callback_data="menu:back")])
+    buttons.append([InlineKeyboardButton(text=t("kb_mode_back", lang), callback_data="menu:back")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _back_keyboard() -> InlineKeyboardMarkup:
+def _back_keyboard(lang: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Əsas menyu", callback_data="menu:back")]
+        [InlineKeyboardButton(text=t("kb_back", lang), callback_data="menu:back")]
     ])
 
 
-def _retry_keyboard() -> InlineKeyboardMarkup:
+def _retry_keyboard(lang: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔁 Yenidən cəhd et", callback_data="retry_last")]
+        [InlineKeyboardButton(text=t("kb_retry", lang), callback_data="retry_last")]
     ])
 
 
-def _upgrade_keyboard() -> InlineKeyboardMarkup:
+def _upgrade_keyboard(lang: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Premium al", callback_data="menu:upgrade")],
-        [InlineKeyboardButton(text="🎁 Dost dəvət et (+bonus)", callback_data="menu:invite")],
+        [InlineKeyboardButton(text=t("kb_buy_premium", lang),  callback_data="menu:upgrade")],
+        [InlineKeyboardButton(text=t("kb_invite_bonus", lang), callback_data="menu:invite")],
     ])
 
 
@@ -215,6 +188,7 @@ def _upgrade_keyboard() -> InlineKeyboardMarkup:
 @router.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
     user = message.from_user
+    lang = user.language_code
 
     referred_by = None
     if command.args and command.args.startswith("ref_"):
@@ -229,34 +203,36 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         db.get_or_create_user, user.id, user.username, user.first_name, referred_by
     )
     # Update language code
-    await asyncio.to_thread(db.update_user_language, user.id, user.language_code)
+    await asyncio.to_thread(db.update_user_language, user.id, lang)
 
-    name = user.first_name or user.username or "Qonaq"
+    name = user.first_name or user.username or t("guest", lang)
 
     extra = ""
     if referred_by and row.get("referred_by") == referred_by:
-        extra = "\n\n🎁 Dəvət linki ilə gəldin — sənə <b>+5 bonus mesaj</b> verildi!"
+        extra = t("start_referral_bonus", lang)
 
     # Premium expiry warning
     days_left = db.days_until_premium_expires(row)
     if days_left is not None and days_left <= settings.premium_expiry_warning_days:
-        extra += f"\n\n⚠️ Premium abunəliyin <b>{days_left} gün</b> sonra bitir! /upgrade ilə uzat."
+        extra += t("start_premium_expiry", lang, days=days_left)
 
     await message.answer(
-        WELCOME_TEXT.format(name=name) + extra,
-        reply_markup=_start_keyboard(),
+        t("welcome", lang, name=name) + extra,
+        reply_markup=_start_keyboard(lang),
         parse_mode="HTML",
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=_back_keyboard(), parse_mode="HTML")
+    lang = message.from_user.language_code
+    await message.answer(t("help", lang), reply_markup=_back_keyboard(lang), parse_mode="HTML")
 
 
 @router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
     user = message.from_user
+    lang = user.language_code
     row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
     plan = await asyncio.to_thread(db.effective_plan, row)
     limit = db.get_daily_limit(plan, row.get("bonus_messages", 0) or 0)
@@ -272,27 +248,31 @@ async def cmd_status(message: Message) -> None:
 
     plan_emoji = "⭐" if plan == "premium" else "🆓"
     lines = [
-        f"{plan_emoji} <b>Plan:</b> {plan.upper()}",
-        f"🎭 <b>Rejim:</b> {MODE_NAMES.get(mode, mode)}",
-        f"🌐 <b>İnternet:</b> {'✅' if web else '❌'}",
+        f"{plan_emoji} <b>{t('status_plan', lang)}:</b> {plan.upper()}",
+        f"🎭 <b>{t('status_mode', lang)}:</b> {MODE_NAMES.get(mode, mode)}",
+        f"🌐 <b>{t('status_internet', lang)}:</b> {'✅' if web else '❌'}",
         "",
-        f"📊 <b>Limit:</b> {used_today}/{limit}",
+        f"📊 <b>{t('status_limit', lang)}:</b> {used_today}/{limit}",
         f"[{bar}]",
-        f"✅ <b>Qalan:</b> {remaining} mesaj",
+        f"✅ <b>{t('status_remaining', lang)}:</b> {remaining} {t('status_msg', lang)}",
     ]
     if plan == "premium" and days_left is not None:
-        lines.append(f"📅 <b>Bitmə tarixi:</b> {row['premium_until'][:10]} ({days_left} gün qalıb)")
+        lines.append(
+            f"📅 <b>{t('status_expires', lang)}:</b> {row['premium_until'][:10]} "
+            f"({days_left} {t('status_days_left', lang)})"
+        )
     elif plan == "free":
         bonus = row.get("bonus_messages", 0) or 0
         if bonus > 0:
-            lines.append(f"🎁 <b>Bonus mesaj:</b> +{bonus}")
-        lines.append("\n💡 /upgrade ilə premium al → 500 mesaj/gün")
+            lines.append(f"🎁 <b>{t('status_bonus', lang)}:</b> +{bonus}")
+        lines.append(t("status_upgrade_tip", lang))
 
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=_back_keyboard())
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=_back_keyboard(lang))
 
 
 @router.message(Command("mode"))
 async def cmd_mode(message: Message) -> None:
+    lang = message.from_user.language_code
     row = await asyncio.to_thread(
         db.get_or_create_user, message.from_user.id, message.from_user.username, message.from_user.first_name
     )
@@ -302,41 +282,43 @@ async def cmd_mode(message: Message) -> None:
         for k, v in MODE_NAMES.items()
     )
     await message.answer(
-        f"🎭 <b>Rejim seç</b>\n\n{mode_list}\n\n"
-        f"Hazırki rejim: <b>{MODE_NAMES.get(current, current)}</b>",
-        reply_markup=_mode_keyboard(current),
+        f"{t('mode_select_title', lang)}\n\n{mode_list}\n\n"
+        f"{t('mode_current', lang)}: <b>{MODE_NAMES.get(current, current)}</b>",
+        reply_markup=_mode_keyboard(current, lang),
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data.startswith("mode:"))
 async def cb_mode_select(callback: CallbackQuery) -> None:
+    lang = callback.from_user.language_code
     mode = callback.data.split(":", 1)[1]
     if mode not in MODE_NAMES:
-        await callback.answer("Yanlış rejim.", show_alert=True)
+        await callback.answer(t("mode_invalid", lang), show_alert=True)
         return
 
     await asyncio.to_thread(db.set_chat_mode, callback.from_user.id, mode)
     await callback.message.edit_text(
-        f"✅ Rejim dəyişdirildi: <b>{MODE_NAMES[mode]}</b>\n"
+        f"{t('mode_changed', lang)}: <b>{MODE_NAMES[mode]}</b>\n"
         f"📝 {MODE_DESCRIPTIONS[mode]}\n\n"
-        "İndi mənə yaz! 👇",
-        reply_markup=_start_keyboard(),
+        f"{t('mode_now_write', lang)}",
+        reply_markup=_start_keyboard(lang),
         parse_mode="HTML",
     )
-    await callback.answer(f"{MODE_NAMES[mode]} seçildi!")
+    await callback.answer(f"{MODE_NAMES[mode]} {t('mode_selected', lang)}")
     await asyncio.to_thread(db.clear_history, callback.from_user.id)
 
 @router.callback_query(F.data.startswith("menu:"))
 async def cb_menu(callback: CallbackQuery) -> None:
     action = callback.data.split(":", 1)[1]
     user = callback.from_user
+    lang = user.language_code
 
     if action == "back":
-        name = user.first_name or user.username or "Qonaq"
+        name = user.first_name or user.username or t("guest", lang)
         await callback.message.edit_text(
-            WELCOME_TEXT.format(name=name),
-            reply_markup=_start_keyboard(),
+            t("welcome", lang, name=name),
+            reply_markup=_start_keyboard(lang),
             parse_mode="HTML",
         )
         await callback.answer()
@@ -345,8 +327,8 @@ async def cb_menu(callback: CallbackQuery) -> None:
         row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
         current = db.get_chat_mode(row)
         await callback.message.edit_text(
-            "🎭 <b>Rejim seç</b>\n\nHər rejim fərqli bir AI şəxsiyyəti aktivləşdirir:",
-            reply_markup=_mode_keyboard(current),
+            f"{t('mode_select_title', lang)}\n\n{t('mode_activates', lang)}",
+            reply_markup=_mode_keyboard(current, lang),
             parse_mode="HTML",
         )
         await callback.answer()
@@ -363,16 +345,16 @@ async def cb_menu(callback: CallbackQuery) -> None:
         bar_filled = int((used_today / limit) * 10) if limit else 0
         bar = "█" * bar_filled + "░" * (10 - bar_filled)
         lines = [
-            f"{plan_emoji} Plan: <b>{plan.upper()}</b>",
-            f"🎭 Rejim: <b>{MODE_NAMES.get(mode, mode)}</b>",
-            f"📊 Bugün: {used_today}/{limit} [{bar}]",
-            f"✅ Qalan: {remaining} mesaj",
+            f"{plan_emoji} {t('status_plan', lang)}: <b>{plan.upper()}</b>",
+            f"🎭 {t('status_mode', lang)}: <b>{MODE_NAMES.get(mode, mode)}</b>",
+            f"📊 {t('status_limit', lang)}: {used_today}/{limit} [{bar}]",
+            f"✅ {t('status_remaining', lang)}: {remaining} {t('status_msg', lang)}",
         ]
         if plan == "premium" and row.get("premium_until"):
-            lines.append(f"📅 Bitmə: {row['premium_until'][:10]}")
+            lines.append(f"📅 {t('status_expires', lang)}: {row['premium_until'][:10]}")
         await callback.message.edit_text(
             "\n".join(lines),
-            reply_markup=_back_keyboard(),
+            reply_markup=_back_keyboard(lang),
             parse_mode="HTML",
         )
         await callback.answer()
@@ -382,45 +364,41 @@ async def cb_menu(callback: CallbackQuery) -> None:
         current = db.get_web_search_enabled(row)
         new_state = not current
         await asyncio.to_thread(db.set_web_search, user.id, new_state)
-        status = "✅ açıldı" if new_state else "❌ bağlandı"
-        await callback.answer(f"🌐 İnternet axtarışı {status}", show_alert=True)
+        status = t("search_on", lang) if new_state else t("search_off", lang)
+        await callback.answer(f"🌐 {status}", show_alert=True)
 
     elif action == "clear":
         count = await asyncio.to_thread(db.clear_history, user.id)
-        name = user.first_name or user.username or "Qonaq"
         await callback.message.edit_text(
-            f"🗑 Söhbət silindi ({count} mesaj).\n\nYeni söhbətə başla! 👇",
-            reply_markup=_start_keyboard(),
+            t("clear_done_inline", lang, count=count),
+            reply_markup=_start_keyboard(lang),
             parse_mode="HTML",
         )
-        await callback.answer("Söhbət silindi!")
+        await callback.answer(t("clear_done_cb", lang))
 
     elif action == "invite":
         await callback.answer()
-        await _send_invite(callback.message, user.id, user.username, user.first_name)
+        await _send_invite(callback.message, user.id, user.username, user.first_name, lang)
 
     elif action == "export":
         await callback.answer()
-        await _send_export(callback.message, user.id)
+        await _send_export(callback.message, user.id, lang)
 
     elif action == "top":
         await callback.answer()
-        await _send_top(callback.message)
+        await _send_top(callback.message, lang)
 
     elif action == "feedback":
         await callback.answer()
         await callback.message.answer(
-            "💌 <b>Rəy/Təklif</b>\n\n"
-            "Botla bağlı rəy, təklif və ya problem bildirmək üçün aşağıdakı formatda yaz:\n\n"
-            "<code>/feedback [mətnin buraya]</code>\n\n"
-            "Məsələn: <code>/feedback Translator rejimi çox gözəldir!</code>",
+            t("feedback_cb_prompt", lang),
             parse_mode="HTML",
         )
 
     elif action == "help":
         await callback.message.edit_text(
-            HELP_TEXT,
-            reply_markup=_back_keyboard(),
+            t("help", lang),
+            reply_markup=_back_keyboard(lang),
             parse_mode="HTML",
         )
         await callback.answer()
@@ -429,18 +407,17 @@ async def cb_menu(callback: CallbackQuery) -> None:
         row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
         plan = await asyncio.to_thread(db.effective_plan, row)
         if plan == "premium":
-            await callback.answer("Artıq premium istifadəçisisən! ⭐", show_alert=True)
+            await callback.answer(t("upgrade_already", lang), show_alert=True)
             return
         await callback.answer()
         await callback.message.answer_invoice(
-            title="Premium plan ⭐",
-            description=(
-                f"{settings.premium_duration_days} gün premium — "
-                f"günlük {settings.premium_daily_limit} mesaj limiti + bütün rejimler."
-            ),
+            title=t("upgrade_invoice_title", lang),
+            description=t("upgrade_invoice_desc", lang,
+                          days=settings.premium_duration_days,
+                          limit=settings.premium_daily_limit),
             payload=f"premium_upgrade:{user.id}",
             currency="XTR",
-            prices=[LabeledPrice(label="Premium", amount=settings.stars_price)],
+            prices=[LabeledPrice(label=t("upgrade_invoice_label", lang), amount=settings.stars_price)],
             provider_token="",
         )
 
@@ -450,34 +427,29 @@ async def cb_menu(callback: CallbackQuery) -> None:
 
 @router.message(Command("clear"))
 async def cmd_clear(message: Message) -> None:
+    lang = message.from_user.language_code
     count = await asyncio.to_thread(db.clear_history, message.from_user.id)
-    await message.answer(
-        f"🗑️ Söhbət tarixçəsi silindi ({count} mesaj).\n"
-        "Yeni söhbətə başlaya bilərsən!"
-    )
+    await message.answer(t("clear_done", lang, count=count))
 
 
 @router.message(Command("invite"))
 async def cmd_invite(message: Message) -> None:
-    await _send_invite(message, message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = message.from_user.language_code
+    await _send_invite(message, message.from_user.id, message.from_user.username, message.from_user.first_name, lang)
 
 
-async def _send_invite(target: Message, user_id: int, username, first_name) -> None:
+async def _send_invite(target: Message, user_id: int, username, first_name, lang: str | None = None) -> None:
     row = await asyncio.to_thread(db.get_or_create_user, user_id, username, first_name)
     bot_user = await target.bot.get_me()
     link = f"https://t.me/{bot_user.username}?start=ref_{user_id}"
     count = row.get("referral_count", 0)
     await target.answer(
-        "🎁 <b>Dost dəvət et, bonus qazan!</b>\n\n"
-        "Hər dəvət etdiyin dost botu açanda — <b>siz hər ikiniz +5 bonus mesaj</b> qazanırsınız.\n\n"
-        f"🔗 Sənin linkin:\n<code>{link}</code>\n\n"
-        f"👥 İndiyə qədər dəvət etdiyin: <b>{count}</b> nəfər\n"
-        f"🎁 Qazandığın bonus: <b>+{count * 5}</b> mesaj",
+        t("invite_text", lang, link=link, count=count, bonus=count * 5),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="📤 Linki paylaş",
-                url=f"https://t.me/share/url?url={link}&text=Bu%20AI%20botu%20çox%20gözəldir!",
+                text=t("invite_share_btn", lang),
+                url=f"https://t.me/share/url?url={link}&text=This%20AI%20bot%20is%20amazing!",
             )],
         ]),
     )
@@ -485,18 +457,19 @@ async def _send_invite(target: Message, user_id: int, username, first_name) -> N
 
 @router.message(Command("export"))
 async def cmd_export(message: Message) -> None:
-    await _send_export(message, message.from_user.id)
+    lang = message.from_user.language_code
+    await _send_export(message, message.from_user.id, lang)
 
 
-async def _send_export(target: Message, user_id: int) -> None:
+async def _send_export(target: Message, user_id: int, lang: str | None = None) -> None:
     messages = await asyncio.to_thread(db.get_all_messages, user_id)
     if not messages:
-        await target.answer("📭 Hələ heç bir söhbət tarixçən yoxdur.")
+        await target.answer(t("export_empty", lang))
         return
 
     lines = []
     for m in messages:
-        who = "👤 Sən" if m["role"] == "user" else "🤖 AI"
+        who = t("export_you", lang) if m["role"] == "user" else t("export_ai", lang)
         topic = f" [{m['topic']}]" if m.get("topic") else ""
         lines.append(f"[{m.get('created_at', '')[:19]}]{topic} {who}:\n{m['content']}\n")
     text = "\n".join(lines)
@@ -504,23 +477,24 @@ async def _send_export(target: Message, user_id: int) -> None:
     file = BufferedInputFile(text.encode("utf-8"), filename=f"chat_export_{user_id}.txt")
     await target.answer_document(
         file,
-        caption=f"📤 Söhbət tarixçən ({len(messages)} mesaj)\n📅 Export tarixi: {db.today()}"
+        caption=t("export_caption", lang, count=len(messages), date=db.today()),
     )
 
 
 @router.message(Command("top"))
 async def cmd_top(message: Message) -> None:
-    await _send_top(message)
+    lang = message.from_user.language_code
+    await _send_top(message, lang)
 
 
-async def _send_top(target: Message) -> None:
+async def _send_top(target: Message, lang: str | None = None) -> None:
     users = await asyncio.to_thread(db.get_top_users, 10)
     if not users:
-        await target.answer("Hələ heç bir istifadəçi yoxdur.")
+        await target.answer(t("top_empty", lang))
         return
 
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
-    lines = ["🏆 <b>Ən aktiv istifadəçilər (bu gün)</b>\n"]
+    lines = [t("top_title", lang)]
     for i, u in enumerate(users):
         name = u.get("first_name") or u.get("username") or f"User {u['id']}"
         plan = "⭐" if u.get("plan") == "premium" else ""
@@ -531,33 +505,27 @@ async def _send_top(target: Message) -> None:
 
 @router.message(Command("search"))
 async def cmd_search(message: Message) -> None:
+    lang = message.from_user.language_code
     row = await asyncio.to_thread(
         db.get_or_create_user, message.from_user.id, message.from_user.username, message.from_user.first_name
     )
     new_state = not db.get_web_search_enabled(row)
     await asyncio.to_thread(db.set_web_search, message.from_user.id, new_state)
-    status = "✅ açıldı" if new_state else "❌ bağlandı"
-    await message.answer(
-        f"🌐 İnternet axtarışı {status}.\n\n"
-        "Açıq olanda AI real-time internetdən məlumat axtarır."
-    )
+    status = t("search_on", lang) if new_state else t("search_off", lang)
+    await message.answer(t("search_toggle_msg", lang, status=status))
 
 
 @router.message(Command("feedback"))
 async def cmd_feedback(message: Message, command: CommandObject) -> None:
+    lang = message.from_user.language_code
     if not command.args:
-        await message.answer(
-            "💌 Rəyinizi belə göndərin:\n"
-            "<code>/feedback Rəyiniz buraya</code>",
-            parse_mode="HTML",
-        )
+        await message.answer(t("feedback_usage", lang), parse_mode="HTML")
         return
 
     text = command.args.strip()
     user = message.from_user
-    # Forward to admins
     feedback_text = (
-        f"💌 <b>Yeni rəy!</b>\n\n"
+        f"💌 <b>New feedback!</b>\n\n"
         f"👤 {user.first_name or ''} (@{user.username or '?'}) [ID: {user.id}]\n\n"
         f"📝 {text}"
     )
@@ -569,52 +537,40 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    await message.answer(
-        "✅ Rəyiniz göndərildi! Təşəkkür edirik 🙏\n"
-        "Hər rəy botu daha da yaxşılaşdırmağa kömək edir."
-        if sent else
-        "✅ Rəyiniz qeydə alındı! Təşəkkür edirik 🙏"
-    )
+    await message.answer(t("feedback_sent", lang) if sent else t("feedback_saved", lang))
 
 
 @router.message(Command("remind"))
 async def cmd_remind(message: Message) -> None:
     """Show premium expiry warning if applicable, else show subscription status."""
     user = message.from_user
+    lang = user.language_code
     row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
     plan = await asyncio.to_thread(db.effective_plan, row)
     days_left = db.days_until_premium_expires(row)
 
     if plan != "premium":
-        await message.answer(
-            "ℹ️ Hazırda pulsuz planda istifadə edirsən.\n\n"
-            "⭐ Premium almaq üçün /upgrade yaz.",
-            reply_markup=_upgrade_keyboard(),
-        )
+        await message.answer(t("remind_free", lang), reply_markup=_upgrade_keyboard(lang))
         return
 
     if days_left is None:
-        await message.answer("✅ Premium aktiv — bitmə tarixi məlum deyil.")
+        await message.answer(t("remind_no_date", lang))
         return
 
     if days_left <= settings.premium_expiry_warning_days:
         await message.answer(
-            f"⚠️ <b>Xatırlatma:</b> Premium abunəliyin <b>{days_left} gün</b> sonra bitir!\n\n"
-            "Uzatmaq üçün /upgrade yaz.",
+            t("remind_expiring", lang, days=days_left),
             parse_mode="HTML",
-            reply_markup=_upgrade_keyboard(),
+            reply_markup=_upgrade_keyboard(lang),
         )
     else:
         until = (row.get("premium_until") or "")[:10]
-        await message.answer(
-            f"✅ Premium aktiv — <b>{days_left} gün</b> qalıb.\n"
-            f"📅 Bitmə tarixi: {until}",
-            parse_mode="HTML",
-        )
+        await message.answer(t("remind_ok", lang, days=days_left, until=until), parse_mode="HTML")
 
 
 @router.message(Command("upgrade"))
 async def cmd_upgrade(message: Message) -> None:
+    lang = message.from_user.language_code
     row = await asyncio.to_thread(
         db.get_or_create_user, message.from_user.id, message.from_user.username, message.from_user.first_name
     )
@@ -623,26 +579,21 @@ async def cmd_upgrade(message: Message) -> None:
         until = row.get("premium_until", "")
         days_left = db.days_until_premium_expires(row)
         await message.answer(
-            f"✅ Artıq premium istifadəçisisən!\n"
-            f"📅 Bitmə tarixi: {until[:10] if until else '—'}\n"
-            f"⏳ Qalan: {days_left} gün" if days_left is not None else
-            f"✅ Artıq premium istifadəçisisən!"
+            t("upgrade_already_msg", lang,
+              until=until[:10] if until else "—",
+              days=days_left if days_left is not None else "—")
         )
         return
 
     await message.bot.send_invoice(
         chat_id=message.chat.id,
-        title="⭐ Premium Plan",
-        description=(
-            f"✨ {settings.premium_duration_days} gün Premium:\n"
-            f"• Günlük {settings.premium_daily_limit} mesaj (standart: {settings.free_daily_limit})\n"
-            f"• Bütün 10 AI rejimi\n"
-            f"• Sənəd/PDF analizi\n"
-            f"• Prioritet dəstək"
-        ),
+        title=t("upgrade_invoice_title", lang),
+        description=t("upgrade_invoice_desc", lang,
+                      days=settings.premium_duration_days,
+                      limit=settings.premium_daily_limit),
         payload=f"premium_upgrade:{message.from_user.id}",
         currency="XTR",
-        prices=[LabeledPrice(label="Premium", amount=settings.stars_price)],
+        prices=[LabeledPrice(label=t("upgrade_invoice_label", lang), amount=settings.stars_price)],
         provider_token="",
     )
 
@@ -654,17 +605,16 @@ async def handle_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
 
 @router.message(F.successful_payment)
 async def handle_successful_payment(message: Message) -> None:
+    lang = message.from_user.language_code
     until = await asyncio.to_thread(
         db.activate_premium, message.from_user.id, settings.premium_duration_days
     )
     await message.answer(
-        "🎉 <b>Ödəniş uğurla alındı!</b>\n\n"
-        "⭐ Premium aktivləşdi!\n"
-        f"📅 Bitmə tarixi: {until.date().isoformat()}\n"
-        f"📨 Günlük limit: {settings.premium_daily_limit} mesaj\n\n"
-        "Yeni imkanlardan istifadə etməyə başla! 🚀",
+        t("payment_success", lang,
+          until=until.date().isoformat(),
+          limit=settings.premium_daily_limit),
         parse_mode="HTML",
-        reply_markup=_start_keyboard(),
+        reply_markup=_start_keyboard(lang),
     )
 
 
@@ -692,7 +642,7 @@ async def cmd_admin(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
     await message.answer(
-        "🛠 <b>Admin Panel</b>\n\nNə etmək istəyirsən?",
+        t("admin_panel_title", message.from_user.language_code),
         reply_markup=_admin_keyboard(),
         parse_mode="HTML",
     )
@@ -701,7 +651,7 @@ async def cmd_admin(message: Message) -> None:
 @router.callback_query(F.data.startswith("admin:"))
 async def cb_admin(callback: CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id):
-        await callback.answer("İcazən yoxdur.", show_alert=True)
+        await callback.answer(t("admin_no_perm", callback.from_user.language_code), show_alert=True)
         return
 
     action = callback.data.split(":", 1)[1]
@@ -1088,11 +1038,12 @@ async def _stream_ai_reply(
 
 @router.callback_query(F.data == "retry_last")
 async def cb_retry_last(callback: CallbackQuery) -> None:
+    lang = callback.from_user.language_code
     pending = _last_failed.pop(callback.from_user.id, None)
     if not pending:
-        await callback.answer("⏰ Vaxtı keçib, yenidən yaz.", show_alert=True)
+        await callback.answer(t("retry_expired", lang), show_alert=True)
         return
-    await callback.answer("🔁 Yenidən cəhd edilir...")
+    await callback.answer(t("retry_trying", lang))
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
@@ -1116,13 +1067,12 @@ async def _handle_ai_message(
     target_user=None,
 ) -> None:
     user = target_user or message.from_user
+    lang = user.language_code
 
     # Per-user lock: skip duplicate request if user is already being processed
     lock = await _get_user_lock(user.id)
     if lock.locked():
-        await message.answer(
-            "⏳ Əvvəlki sorğun hələ cavablanır, bir az gözlə...",
-        )
+        await message.answer(t("user_busy", lang))
         return
 
     async with lock:
@@ -1132,19 +1082,15 @@ async def _handle_ai_message(
         except Exception as exc:
             logger.exception("DB error for user %s: %s", user.id, exc)
             _capture(exc)
-            await message.answer("😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.")
+            await message.answer(t("db_error", lang))
             return
 
         if not ctx["allowed"]:
             limit = ctx["limit"]
             await message.answer(
-                f"⛔ <b>Günlük limit bitdi</b> ({limit}/{limit} mesaj)\n\n"
-                "Seçimlər:\n"
-                "• Sabah limiti sıfırlanır\n"
-                "• /upgrade ilə premium al (500 mesaj/gün)\n"
-                "• /invite ilə dost dəvət et (bonus mesaj)",
+                t("limit_reached", lang, limit=limit),
                 parse_mode="HTML",
-                reply_markup=_upgrade_keyboard(),
+                reply_markup=_upgrade_keyboard(lang),
             )
             return
 
@@ -1155,19 +1101,18 @@ async def _handle_ai_message(
         usage     = ctx["usage"]
         limit     = ctx["limit"]
         web_search = ctx.get("web_search", False)
-        # usage is already incremented by check_usage_and_get_history, so remaining is correct
         remaining = max(limit - usage, 0)
 
         try:
             if settings.streaming_enabled:
                 reply_text, model_used = await _stream_ai_reply(
-                    message, history, user_text, user.language_code, mode,
+                    message, history, user_text, lang, mode,
                     media_bytes, media_mime, web_search,
                 )
             else:
                 reply_text, model_used = await asyncio.to_thread(
                     generate_reply,
-                    history, user_text, user.language_code, mode,
+                    history, user_text, lang, mode,
                     media_bytes, media_mime, web_search,
                 )
         except GeminiRateLimitError as exc:
@@ -1177,10 +1122,9 @@ async def _handle_ai_message(
                 "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
             }
             await message.answer(
-                f"⏳ <b>AI yüklənib</b>\n"
-                f"<b>{exc.retry_after} saniyə</b> sonra yenidən cəhd et.",
+                t("rate_limited", lang, seconds=exc.retry_after),
                 parse_mode="HTML",
-                reply_markup=_retry_keyboard(),
+                reply_markup=_retry_keyboard(lang),
             )
             return
         except GeminiError as exc:
@@ -1190,12 +1134,11 @@ async def _handle_ai_message(
                 "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
             }
             await message.answer(
-                "😕 AI cavab verə bilmədi. Bir az sonra yenidən cəhd et.",
-                reply_markup=_retry_keyboard(),
+                t("ai_error", lang),
+                reply_markup=_retry_keyboard(lang),
             )
             return
 
-        # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
         history_label = user_text if user_text else "[media]"
 
         await asyncio.gather(
@@ -1208,8 +1151,7 @@ async def _handle_ai_message(
 
         if remaining <= 3:
             await message.answer(
-                f"ℹ️ Bugün üçün qalan limit: <b>{remaining}/{limit}</b>\n"
-                "💡 /upgrade ilə Premium al — 500 mesaj/gün!",
+                t("remaining_warning", lang, remaining=remaining, limit=limit),
                 parse_mode="HTML",
             )
 
@@ -1234,7 +1176,8 @@ async def handle_photo(message: Message) -> None:
         return
     photo = message.photo[-1]
     caption = (message.caption or "").strip()
-    prompt = caption if caption else "Bu şəkildə nə görürsən? Ətraflı izah et, nə varsa hamısını say."
+    lang = message.from_user.language_code
+    prompt = caption if caption else t("photo_default_prompt", lang)
 
     await message.bot.send_chat_action(message.chat.id, "typing")
     file = await message.bot.get_file(photo.file_id)
@@ -1266,22 +1209,16 @@ async def handle_document(message: Message) -> None:
     doc = message.document
     mime = doc.mime_type or ""
     caption = (message.caption or "").strip()
+    lang = message.from_user.language_code
 
     # Check file size (Telegram limit is 20MB but we cap at 10MB for Gemini)
     size_mb = (doc.file_size or 0) / 1_048_576
     if size_mb > MAX_DOC_SIZE_MB:
-        await message.answer(
-            f"❌ Fayl həddindən böyükdür ({size_mb:.1f} MB).\n"
-            f"Maksimum ölçü: {MAX_DOC_SIZE_MB} MB."
-        )
+        await message.answer(t("doc_too_large", lang, size=f"{size_mb:.1f}", max=MAX_DOC_SIZE_MB))
         return
 
     if mime not in SUPPORTED_DOC_MIMES:
-        await message.answer(
-            "❌ Bu fayl formatı dəstəklənmir.\n\n"
-            "✅ Dəstəklənən formatlar:\n"
-            "• PDF, TXT, CSV, JSON, HTML, Markdown, DOCX"
-        )
+        await message.answer(t("doc_unsupported", lang))
         return
 
     await message.bot.send_chat_action(message.chat.id, "typing")
@@ -1289,10 +1226,7 @@ async def handle_document(message: Message) -> None:
     downloaded = await message.bot.download_file(file.file_path)
     doc_bytes = downloaded.read()
 
-    prompt = caption if caption else (
-        "Bu sənədi diqqətlə oxu və əsas məzmununu izah et. "
-        "Əgər PDF-dirsə, bütün əhəmiyyətli məlumatları üzə çıxar."
-    )
+    prompt = caption if caption else t("doc_default_prompt", lang)
 
     await _handle_ai_message(
         message, prompt,
