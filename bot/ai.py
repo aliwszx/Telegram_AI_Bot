@@ -25,6 +25,7 @@ _client = genai.Client(api_key=settings.gemini_api_key)
 # Fallback chain — if primary hits rate limit, silently try next
 FALLBACK_MODELS = [
     settings.gemini_model,
+    "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
     "gemini-3-flash",
     "gemini-2.5-flash",
