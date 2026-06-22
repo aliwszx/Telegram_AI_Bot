@@ -264,17 +264,23 @@ def generate_reply(
                     last_was_rate_limit = False
                     break
 
-                if is_transient(exc) and transient_attempts < 2:
-                    transient_attempts += 1
-                    delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
-                    logger.warning(
-                        "Model %s transient error (attempt %s), retrying in %.1fs: %s",
-                        model, transient_attempts, delay, exc,
-                    )
-                    last_error = exc
-                    last_was_rate_limit = False
-                    time.sleep(delay)
-                    continue
+                if is_transient(exc):
+                    if transient_attempts < 2:
+                        transient_attempts += 1
+                        delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
+                        logger.warning(
+                            "Model %s transient error (attempt %s), retrying in %.1fs: %s",
+                            model, transient_attempts, delay, exc,
+                        )
+                        last_error = exc
+                        last_was_rate_limit = False
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.warning("Model %s transient error exhausted retries, trying next. Error: %s", model, exc)
+                        last_error = exc
+                        last_was_rate_limit = False
+                        break
 
                 raise GeminiError(str(exc)) from exc
 
@@ -353,17 +359,23 @@ def generate_reply_stream(
                     last_was_rate_limit = False
                     break
 
-                if is_transient(exc) and transient_attempts < 2:
-                    transient_attempts += 1
-                    delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
-                    logger.warning(
-                        "Model %s transient error (stream, attempt %s), retrying in %.1fs: %s",
-                        model, transient_attempts, delay, exc,
-                    )
-                    last_error = exc
-                    last_was_rate_limit = False
-                    time.sleep(delay)
-                    continue
+                if is_transient(exc):
+                    if transient_attempts < 2:
+                        transient_attempts += 1
+                        delay = min(4.0, 0.5 * (2 ** (transient_attempts - 1)))
+                        logger.warning(
+                            "Model %s transient error (stream, attempt %s), retrying in %.1fs: %s",
+                            model, transient_attempts, delay, exc,
+                        )
+                        last_error = exc
+                        last_was_rate_limit = False
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.warning("Model %s transient error exhausted retries (stream), trying next. Error: %s", model, exc)
+                        last_error = exc
+                        last_was_rate_limit = False
+                        break
 
                 raise GeminiError(str(exc)) from exc
 
