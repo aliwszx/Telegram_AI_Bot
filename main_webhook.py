@@ -44,13 +44,16 @@ async def on_startup(bot: Bot) -> None:
     me = await bot.get_me()
     logger.info("Webhook set to %s for @%s", webhook_url, me.username)
 
-    # Start background scheduler in background
+    # Start background scheduler
     asyncio.create_task(run_scheduler(bot))
 
 
 async def on_shutdown(bot: Bot) -> None:
-    await bot.delete_webhook()
-    logger.info("Webhook deleted.")
+    # NOTE: intentionally NOT calling bot.delete_webhook() here.
+    # Render briefly overlaps old/new instances during zero-downtime deploys.
+    # If the old instance deletes the webhook AFTER the new one has set it,
+    # Telegram is left with no webhook at all — bot stops responding completely.
+    logger.info("Bot shutdown complete.")
 
 
 def main() -> None:
