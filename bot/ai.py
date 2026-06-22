@@ -22,13 +22,18 @@ logger = logging.getLogger(__name__)
 
 _client = genai.Client(api_key=settings.gemini_api_key)
 
-# Fallback chain — if primary hits rate limit, silently try next
+# Fallback chain — ordered by available quota (highest RPD first)
+# gemini-3.1-flash-lite: 500 RPD (primary)
+# gemini-3-flash:        20 RPD
+# gemini-3.5-flash:      20 RPD
+# gemini-2.5-flash:      20 RPD
+# gemini-2.5-flash-lite: 20 RPD
 FALLBACK_MODELS = [
     settings.gemini_model,
-    "gemini-3.5-flash",
     "gemini-3-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite"
+    "gemini-2.5-flash-lite",
 ]
 
 # ── Chat mode system prompts ───────────────────────────────────────────────
