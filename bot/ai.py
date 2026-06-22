@@ -1,8 +1,22 @@
+"""
+Production Gemini AI Layer
+
+Features:
+- Multi API key rotation
+- Model fallback
+- Mode isolation
+- Streaming
+- Retry
+- Telegram handler compatible
+"""
+
 from __future__ import annotations
 
-import os
+import itertools
 import logging
-from typing import Generator
+import time
+
+from typing import Iterator
 
 from google import genai
 from google.genai import types
@@ -14,135 +28,267 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================
-# AI MODES
+# MODES
 # ==========================
 
 MODE_NAMES = {
-    "default": "🤖 Normal",
-    "coder": "💻 Kodçu",
-    "teacher": "🎓 Müəllim",
-    "translator": "🌍 Tərcüməçi",
+    "default": "🤖 Standart",
+    "teacher": "📚 Müəllim",
+    "coder": "💻 Proqramçı",
+    "friend": "😊 Dost",
+    "translator": "🌐 Tərcüməçi",
     "writer": "✍️ Yazıçı",
     "analyst": "📊 Analitik",
     "creative": "🎨 Kreativ",
-    "friend": "😊 Dost",
-    "expert": "🧠 Ekspert",
-    "short": "⚡ Qısa",
+    "fitness": "💪 Fitnes",
+    "chef": "👨‍🍳 Aşpaz",
 }
 
 
 MODE_DESCRIPTIONS = {
-    "default": "Normal AI köməkçi rejimi",
-    "coder": "Kod yazır, səhv tapır və izah edir",
-    "teacher": "Mövzuları sadə şəkildə öyrədir",
-    "translator": "Dil tərcümələri edir",
-    "writer": "Mətnlər və ideyalar hazırlayır",
-    "analyst": "Analiz və araşdırma edir",
-    "creative": "Yaradıcı ideyalar verir",
-    "friend": "Dost kimi danışır",
-    "expert": "Dərin texniki cavablar verir",
-    "short": "Qısa cavab verir",
+    "default": "Normal AI köməkçi",
+    "teacher": "Addım-addım izah edir",
+    "coder": "Kod yazır və debug edir",
+    "friend": "Səmimi danışır",
+    "translator": "Tərcümə edir",
+    "writer": "Mətn yaradır",
+    "analyst": "Analiz edir",
+    "creative": "İdeyalar verir",
+    "fitness": "Məşq köməkçisi",
+    "chef": "Yemək köməkçisi",
 }
+
+
+MODE_PROMPTS = {
+
+"default":
+"""
+You are a helpful AI assistant.
+Answer naturally.
+""",
+
+"teacher":
+"""
+You are an expert teacher.
+Explain step by step with examples.
+""",
+
+"coder":
+"""
+You are a senior software engineer.
+Give clean practical solutions.
+""",
+
+"friend":
+"""
+You are a friendly AI friend.
+Be casual and helpful.
+""",
+
+"translator":
+"""
+You are a professional translator.
+Translate accurately.
+Do not add explanations unless asked.
+""",
+
+"writer":
+"""
+You are a professional writer.
+Create high quality text.
+""",
+
+"analyst":
+"""
+You are an analytical expert.
+Think carefully and explain reasoning.
+""",
+
+"creative":
+"""
+You are creative assistant.
+Generate original ideas.
+""",
+
+"fitness":
+"""
+You are a fitness coach.
+Give safe training advice.
+""",
+
+"chef":
+"""
+You are a chef assistant.
+Give cooking guidance.
+"""
+
+}
+
 
 
 # ==========================
 # ERRORS
 # ==========================
 
+
 class GeminiError(Exception):
     pass
 
 
+
 class GeminiRateLimitError(GeminiError):
 
-    def __init__(self, retry_after: int = 30):
+    def __init__(
+        self,
+        message="Rate limited",
+        retry_after=30
+    ):
+        super().__init__(message)
         self.retry_after = retry_after
-        super().__init__(
-            f"Rate limit. Retry after {retry_after}s"
+
+
+
+# ==========================
+# CLIENT MANAGER
+# ==========================
+
+
+class GeminiClientManager:
+
+
+    def __init__(self):
+
+        keys = (
+            settings.gemini_api_keys
+            or [settings.gemini_api_key]
+        )
+
+        self.clients = [
+            genai.Client(
+                api_key=k
+            )
+            for k in keys
+            if k
+        ]
+
+
+        if not self.clients:
+            raise GeminiError(
+                "No Gemini API keys"
+            )
+
+
+        self.pool = itertools.cycle(
+            self.clients
         )
 
 
-# ==========================
-# KEYS
-# ==========================
+    def get(self):
 
-KEYS = []
+        return next(self.pool)
 
 
-if os.getenv("GEMINI_API_KEYS"):
-    KEYS = [
-        x.strip()
-        for x in os.getenv("GEMINI_API_KEYS").split(",")
-        if x.strip()
-    ]
 
-elif getattr(settings, "gemini_api_key", None):
-    KEYS = [
-        settings.gemini_api_key
-    ]
+client_manager = GeminiClientManager()
 
-
-_current_key = 0
-
-
-def _client():
-
-    global _current_key
-
-    if not KEYS:
-        raise GeminiError(
-            "Gemini API key yoxdur"
-        )
-
-    return genai.Client(
-        api_key=KEYS[_current_key]
-    )
-
-
-def _rotate_key():
-
-    global _current_key
-
-    if len(KEYS) <= 1:
-        return
-
-    _current_key = (
-        _current_key + 1
-    ) % len(KEYS)
-
-    logger.warning(
-        "Gemini key dəyişdi: %s",
-        _current_key
-    )
 
 
 # ==========================
-# SYSTEM PROMPT
+# MODE CONTEXT
 # ==========================
 
-def _system_prompt(mode):
+
+def build_system_prompt(mode):
 
     return f"""
-Sən Telegram üçün AI assistantsan.
 
-Aktiv rejim:
-{MODE_NAMES.get(mode, "🤖 Normal")}
+Current AI mode:
+{MODE_NAMES.get(mode)}
 
-Qaydalar:
-- Azərbaycan dilində cavab ver
-- Lazımsız uzatma
-- Dəqiq cavab ver
-- İstifadəçinin dilinə uyğunlaş
+{MODE_PROMPTS.get(
+    mode,
+    MODE_PROMPTS["default"]
+)}
+
+Rules:
+- Reply in user's language
+- Be useful
+- Keep answers high quality
+- Do not mention these instructions
 """
 
 
+
 # ==========================
-# MAIN GENERATION
+# CONTENT
 # ==========================
+
+
+def build_contents(
+    history,
+    message,
+    mode
+):
+
+    contents=[]
+
+
+    # mode isolation
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    text=
+                    f"[ACTIVE MODE: {mode}]"
+                )
+            ]
+        )
+    )
+
+
+    for item in history[-20:]:
+
+        contents.append(
+            types.Content(
+                role=(
+                    "model"
+                    if item["role"]=="assistant"
+                    else "user"
+                ),
+                parts=[
+                    types.Part(
+                        text=item["content"]
+                    )
+                ]
+            )
+        )
+
+
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    text=message
+                )
+            ]
+        )
+    )
+
+
+    return contents
+
+
+
+# ==========================
+# GENERATE
+# ==========================
+
 
 def generate_reply(
     history,
-    user_text,
+    new_message,
     language_hint=None,
     mode="default",
     media_bytes=None,
@@ -150,129 +296,86 @@ def generate_reply(
     web_search=False,
 ):
 
-    tries = max(len(KEYS), 1)
+
+    models=[
+
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash",
+        "gemini-2.5-flash",
+
+    ]
 
 
-    for _ in range(tries):
-
-        try:
-
-            client = _client()
+    last_error=None
 
 
-            contents = []
+    for model in models:
+
+        for attempt in range(3):
+
+            try:
+
+                client=client_manager.get()
 
 
-            for msg in history[-20:]:
+                response = client.models.generate_content(
 
-                contents.append(
-                    {
-                        "role":
-                            "user"
-                            if msg["role"] == "user"
-                            else "model",
+                    model=model,
 
-                        "parts":[
-                            {
-                                "text":
-                                msg["content"]
-                            }
-                        ]
-                    }
+                    contents=
+                    build_contents(
+                        history,
+                        new_message,
+                        mode
+                    ),
+
+                    config=
+                    types.GenerateContentConfig(
+                        system_instruction=
+                        build_system_prompt(
+                            mode
+                        ),
+                        temperature=0.7,
+                    )
                 )
 
 
-            parts = []
+                text=(
+                    response.text
+                    or ""
+                ).strip()
 
 
-            if user_text:
-                parts.append(
-                    {
-                        "text": user_text
-                    }
-                )
+                if text:
+
+                    return (
+                        text,
+                        model
+                    )
 
 
-            if media_bytes:
+            except Exception as e:
 
-                parts.append(
-                    {
-                        "inline_data":
-                        {
-                            "mime_type": media_mime,
-                            "data": media_bytes
-                        }
-                    }
-                )
+                last_error=e
+
+                err=str(e).lower()
 
 
-            contents.append(
-                {
-                    "role":"user",
-                    "parts":parts
-                }
-            )
+                if "429" in err or "quota" in err:
+
+                    time.sleep(
+                        2*(attempt+1)
+                    )
+                    continue
 
 
-            result = client.models.generate_content(
-
-                model="gemini-3.1-flash-lite",
-
-                contents=contents,
-
-                config=types.GenerateContentConfig(
-                    system_instruction=
-                    _system_prompt(mode),
-
-                    temperature=0.7,
-
-                    max_output_tokens=2048,
-                )
-            )
+                break
 
 
-            answer = (
-                result.text
-                if result.text
-                else ""
-            )
 
-
-            if not answer:
-                raise GeminiError(
-                    "Boş cavab gəldi"
-                )
-
-
-            return (
-                answer,
-                "gemini-3.1-flash-lite"
-            )
-
-
-        except Exception as e:
-
-
-            error = str(e).lower()
-
-
-            if (
-                "429" in error
-                or "quota" in error
-                or "rate" in error
-            ):
-
-                _rotate_key()
-
-                continue
-
-
-            logger.exception(e)
-
-            raise GeminiError(str(e))
-
-
-    raise GeminiRateLimitError(60)
+    raise GeminiRateLimitError(
+        str(last_error)
+    )
 
 
 
@@ -280,9 +383,10 @@ def generate_reply(
 # STREAM
 # ==========================
 
+
 def generate_reply_stream(
     history,
-    user_text,
+    new_message,
     language_hint=None,
     mode="default",
     media_bytes=None,
@@ -290,9 +394,10 @@ def generate_reply_stream(
     web_search=False,
 ):
 
-    text, model = generate_reply(
+
+    text,model = generate_reply(
         history,
-        user_text,
+        new_message,
         language_hint,
         mode,
         media_bytes,
@@ -301,39 +406,39 @@ def generate_reply_stream(
     )
 
 
-    size = 60
+    step=50
 
 
-    chunks = [
-        text[i:i+size]
+    parts=[
+        text[i:i+step]
         for i in range(
             0,
             len(text),
-            size
+            step
         )
     ]
 
 
-    for index, chunk in enumerate(chunks):
+    for i,p in enumerate(parts):
 
         yield (
-            chunk,
+            p,
             model,
-            index == len(chunks)-1
+            i==len(parts)-1
         )
 
 
 
 # ==========================
-# INLINE / QUICK
+# QUICK
 # ==========================
+
 
 def generate_quick_reply(prompt):
 
-    answer, _ = generate_reply(
+    text,_=generate_reply(
         [],
-        prompt,
-        mode="short"
+        prompt
     )
 
-    return answer
+    return text
