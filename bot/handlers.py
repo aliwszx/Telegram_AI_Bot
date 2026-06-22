@@ -1217,15 +1217,17 @@ async def handle_voice(message: Message) -> None:
     audio_bytes = downloaded.read()
 
     prompt = (
-        "Listen to this voice message carefully. "
-        "First transcribe exactly what was said, then reply naturally. "
-        "Format your response EXACTLY like this:\n"
-        "🎙 [transcribed text here]\n\n"
-        "[your reply here]\n\n"
-        "Reply in the same language as the voice message."
+        "Listen to this voice message and do two things:\n"
+        "1. Transcribe exactly what was said (just the words, no explanation)\n"
+        "2. Reply naturally to what was said\n\n"
+        "Format:\n"
+        "🎙 [exact transcription]\n\n"
+        "[your natural reply]\n\n"
+        "IMPORTANT: Reply in the SAME language as the voice message. "
+        "If they spoke Azerbaijani, reply in Azerbaijani. "
+        "Do NOT explain what the word means unless asked."
     )
     await _handle_ai_message(message, prompt, media_bytes=audio_bytes, media_mime=mime)
-
 
 # ── Sticker messages ───────────────────────────────────────────────────────
 
