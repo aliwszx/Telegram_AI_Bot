@@ -1099,13 +1099,8 @@ async def _handle_ai_message(
         )
         return
 
-    # Determine topic tag for storage
-    history_label = user_text
-    if media_bytes:
-        mime_type = media_mime.split("/")[0]
-        prefix_map = {"image": "🖼 [Şəkil]", "audio": "🎙 [Səs]", "application": "📄 [Sənəd]"}
-        prefix = prefix_map.get(mime_type, "📎 [Media]")
-        history_label = f"{prefix} {user_text}" if user_text else prefix
+   # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
+    history_label = user_text if user_text else "[media]"
 
     await asyncio.gather(
         asyncio.to_thread(db.save_message, user.id, "user", history_label),
