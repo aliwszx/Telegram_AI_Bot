@@ -419,7 +419,6 @@ def generate_reply(
 
             if is_model_not_found(exc):
                 logger.error("Model %s not found, skipping: %s", model, exc)
-                _rotation.mark_daily_exhausted(client, model)
                 continue
 
             if is_transient(exc):
