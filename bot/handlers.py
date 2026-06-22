@@ -1217,9 +1217,12 @@ async def handle_voice(message: Message) -> None:
     audio_bytes = downloaded.read()
 
     prompt = (
-        "Bu səsli mesajı dinlə, dediklərini anla və adi söhbət kimi cavab ver. "
-        "Cavabının əvvəlində mətnə çevrilmiş halını qısaca yaz (məs: '🎙 Eşitdiyim: ...'), "
-        "sonra normal cavabını ver."
+        "Listen to this voice message carefully. "
+        "First transcribe exactly what was said, then reply naturally. "
+        "Format your response EXACTLY like this:\n"
+        "🎙 [transcribed text here]\n\n"
+        "[your reply here]\n\n"
+        "Reply in the same language as the voice message."
     )
     await _handle_ai_message(message, prompt, media_bytes=audio_bytes, media_mime=mime)
 
