@@ -32,6 +32,21 @@ async def invalidate_user(user_id: int) -> None:
         logger.warning("Redis invalidate error: %s", exc)
 
 
+async def check_flood(user_id: int, min_interval: float) -> bool:
+    """Returns True if user is flooding (too fast), False if request is allowed."""
+    if _redis is None:
+        return False
+    try:
+        key = f"flood:{user_id}"
+        # SET key 1 PX <ms> NX — only sets if key doesn't exist
+        result = await _redis.set(key, 1, px=int(min_interval * 1000), nx=True)
+        # result is None means key already existed → flooding
+        return result is None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Redis flood check error: %s", exc)
+        return False
+
+
 async def ping() -> bool:
     if _redis is None:
         return False

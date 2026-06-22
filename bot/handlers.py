@@ -1060,6 +1060,7 @@ async def _handle_ai_message(
     usage     = ctx["usage"]
     limit     = ctx["limit"]
     web_search = ctx.get("web_search", True)
+    # usage is already incremented by check_usage_and_get_history, so remaining is correct
     remaining = max(limit - usage, 0)
 
     try:
@@ -1099,7 +1100,7 @@ async def _handle_ai_message(
         )
         return
 
-   # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
+    # Tarixdə yalnız mətn məzmununu saxla, media prefiksi olmadan
     history_label = user_text if user_text else "[media]"
 
     await asyncio.gather(

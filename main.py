@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 
-import sentry_sdk
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -14,6 +13,7 @@ from aiogram.enums import ParseMode
 from bot.config import settings
 from bot.handlers import router
 from bot.scheduler import run_scheduler
+from bot.sentry import init_sentry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,20 +22,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _init_sentry() -> None:
-    if not settings.sentry_dsn:
-        return
-    sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.sentry_environment,
-        traces_sample_rate=0.1,
-    )
-    logger.info("Sentry initialised (env=%s)", settings.sentry_environment)
-
-
 async def main() -> None:
     settings.validate()
-    _init_sentry()
+    init_sentry()
 
     bot = Bot(
         token=settings.bot_token,

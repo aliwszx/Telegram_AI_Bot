@@ -7,7 +7,10 @@ New features: conversation topics, revenue tracking, premium expiry warnings.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 from supabase import create_client, Client
 
@@ -19,12 +22,12 @@ Plan = Literal["free", "premium"]
 _client: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 
-def _today() -> str:
+def today() -> str:
     return dt.date.today().isoformat()
 
 
-def today() -> str:
-    return _today()
+# Internal alias used within this module
+_today = today
 
 
 # ── Users ──────────────────────────────────────────────────────────────────
@@ -151,7 +154,15 @@ def days_until_premium_expires(user: dict) -> int | None:
 
 @with_retry()
 def activate_premium(user_id: int, days: int) -> dt.datetime:
-    until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+    # If user already has active premium, extend from existing expiry date
+    user = get_user(user_id)
+    now = dt.datetime.now(dt.timezone.utc)
+    base = now
+    if user:
+        existing_until = _parse_dt(user.get("premium_until"))
+        if existing_until and existing_until > now:
+            base = existing_until
+    until = base + dt.timedelta(days=days)
     _client.table("users").update(
         {
             "plan": "premium",
@@ -211,8 +222,8 @@ def check_usage_and_get_history(user_id: int) -> dict:
             if isinstance(data, list):
                 data = data[0]
             return data
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("RPC check_usage_and_get_history failed, using fallback: %s", exc)
     return _check_usage_fallback(user_id)
 
 

@@ -5,7 +5,6 @@ Usage: python main_webhook.py
 import asyncio
 import logging
 
-import sentry_sdk
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -15,23 +14,13 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from bot.config import settings
 from bot.handlers import router
 from bot.scheduler import run_scheduler
+from bot.sentry import init_sentry
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-def _init_sentry() -> None:
-    if not settings.sentry_dsn:
-        return
-    sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.sentry_environment,
-        traces_sample_rate=0.1,
-    )
-    logger.info("Sentry initialised (env=%s)", settings.sentry_environment)
 
 
 async def on_startup(bot: Bot) -> None:
@@ -58,7 +47,7 @@ async def on_shutdown(bot: Bot) -> None:
 
 def main() -> None:
     settings.validate()
-    _init_sentry()
+    init_sentry()
 
     bot = Bot(
         token=settings.bot_token,
