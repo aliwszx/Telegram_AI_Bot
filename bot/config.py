@@ -36,14 +36,66 @@ def _get_list(name: str) -> list[int]:
     return result
 
 
+def _get_api_keys() -> list[str]:
+    """
+    Çoxlu Gemini API key dəstəyi.
+    GEMINI_API_KEY_1, GEMINI_API_KEY_2, ... və ya vergüllə ayrılmış GEMINI_API_KEYS.
+    Əgər heç biri yoxdursa, köhnə GEMINI_API_KEY istifadə olunur.
+    """
+    # Vergüllə ayrılmış format: GEMINI_API_KEYS=key1,key2,key3
+    multi = os.getenv("GEMINI_API_KEYS", "")
+    if multi:
+        keys = [k.strip() for k in multi.split(",") if k.strip()]
+        if keys:
+            return keys
+
+    # Nömrəli format: GEMINI_API_KEY_1, GEMINI_API_KEY_2, ...
+    numbered: list[str] = []
+    for i in range(1, 20):
+        k = os.getenv(f"GEMINI_API_KEY_{i}", "")
+        if k:
+            numbered.append(k)
+    if numbered:
+        return numbered
+
+    # Köhnə tək key formatı
+    single = os.getenv("GEMINI_API_KEY", "")
+    return [single] if single else []
+
+
+def _get_fallback_models() -> list[str]:
+    """
+    Fallback model zənciri.
+    GEMINI_FALLBACK_MODELS=gemini-2.0-flash-lite,gemini-1.5-flash-8b,gemini-1.5-flash
+    Əgər yoxdursa, default zəncir istifadə olunur.
+    """
+    raw = os.getenv("GEMINI_FALLBACK_MODELS", "")
+    if raw:
+        models = [m.strip() for m in raw.split(",") if m.strip()]
+        if models:
+            return models
+    # Default fallback zənciri (free tier-də mövcud modellər)
+    return [
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
+    ]
+
+
 @dataclass(frozen=True)
 class Settings:
     # ── Telegram ───────────────────────────────────────────────────────────
     bot_token: str = os.getenv("BOT_TOKEN", "")
 
     # ── Gemini ─────────────────────────────────────────────────────────────
+    # Köhnə tək key (geriyə uyğunluq üçün)
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+
+    # Çoxlu key və fallback model dəstəyi
+    gemini_api_keys: list[str] = field(default_factory=_get_api_keys)
+    gemini_fallback_models: list[str] = field(default_factory=_get_fallback_models)
 
     # ── Supabase ───────────────────────────────────────────────────────────
     supabase_url: str = os.getenv("SUPABASE_URL", "")
@@ -76,11 +128,17 @@ class Settings:
     premium_expiry_warning_days: int = field(default_factory=lambda: _get_int("PREMIUM_EXPIRY_WARNING_DAYS", 3))
 
     def validate(self) -> None:
+        # Ən az bir API key olmalıdır
+        if not self.gemini_api_keys and not self.gemini_api_key:
+            raise RuntimeError(
+                "Heç bir Gemini API key tapılmadı. "
+                "GEMINI_API_KEY, GEMINI_API_KEYS, və ya GEMINI_API_KEY_1 mühit dəyişənini təyin edin."
+            )
+
         missing = [
             name
             for name, value in [
                 ("BOT_TOKEN", self.bot_token),
-                ("GEMINI_API_KEY", self.gemini_api_key),
                 ("SUPABASE_URL", self.supabase_url),
                 ("SUPABASE_KEY", self.supabase_key),
             ]
