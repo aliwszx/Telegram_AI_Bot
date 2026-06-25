@@ -201,7 +201,9 @@ Rules:
 def build_contents(
     history,
     message,
-    mode
+    mode,
+    media_bytes=None,
+    media_mime="image/jpeg",
 ):
 
     contents=[]
@@ -239,17 +241,28 @@ def build_contents(
         )
 
 
+    # Build final user message parts
+    user_parts = []
+
+    # Attach media (image/PDF/etc.) before the text if provided
+    if media_bytes:
+        user_parts.append(
+            types.Part.from_bytes(
+                data=media_bytes,
+                mime_type=media_mime,
+            )
+        )
+
+    user_parts.append(
+        types.Part(text=message)
+    )
+
     contents.append(
         types.Content(
             role="user",
-            parts=[
-                types.Part(
-                    text=message
-                )
-            ]
+            parts=user_parts,
         )
     )
-
 
     return contents
 
@@ -292,6 +305,15 @@ def generate_reply(
                 client=client_manager.get()
 
 
+                # Build tools list — web search if requested
+                tools = None
+                if web_search:
+                    tools = [
+                        types.Tool(
+                            google_search=types.GoogleSearch()
+                        )
+                    ]
+
                 response = client.models.generate_content(
 
                     model=model,
@@ -300,7 +322,9 @@ def generate_reply(
                     build_contents(
                         history,
                         new_message,
-                        mode
+                        mode,
+                        media_bytes=media_bytes,
+                        media_mime=media_mime,
                     ),
 
                     config=
@@ -310,6 +334,7 @@ def generate_reply(
                             mode
                         ),
                         temperature=0.7,
+                        tools=tools,
                     )
                 )
 
@@ -368,38 +393,99 @@ def generate_reply_stream(
     web_search=False,
 ):
 
-
-    text,model = generate_reply(
-        history,
-        new_message,
-        language_hint,
-        mode,
-        media_bytes,
-        media_mime,
-        web_search
-    )
-
-
-    step=50
-
-
-    parts=[
-        text[i:i+step]
-        for i in range(
-            0,
-            len(text),
-            step
-        )
+    models=[
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash",
+        "gemini-2.5-flash",
     ]
 
+    last_error=None
 
-    for i,p in enumerate(parts):
+    # Build tools list — web search if requested
+    tools = None
+    if web_search:
+        tools = [
+            types.Tool(
+                google_search=types.GoogleSearch()
+            )
+        ]
 
-        yield (
-            p,
-            model,
-            i==len(parts)-1
-        )
+    for model in models:
+
+        for attempt in range(3):
+
+            try:
+
+                client=client_manager.get()
+
+                accumulated=""
+                chunk_count=0
+
+                for chunk in client.models.generate_content_stream(
+
+                    model=model,
+
+                    contents=
+                    build_contents(
+                        history,
+                        new_message,
+                        mode,
+                        media_bytes=media_bytes,
+                        media_mime=media_mime,
+                    ),
+
+                    config=
+                    types.GenerateContentConfig(
+                        system_instruction=
+                        build_system_prompt(mode),
+                        temperature=0.7,
+                        tools=tools,
+                    )
+                ):
+
+                    piece = (
+                        chunk.text or ""
+                    )
+
+                    if not piece:
+                        continue
+
+                    accumulated += piece
+                    chunk_count  += 1
+
+                    # is_final: True on the very last chunk
+                    # We can't know ahead of time, so we yield
+                    # is_final=False for every chunk and let the
+                    # caller detect end-of-stream when the generator
+                    # is exhausted.  The final flag is emitted below.
+                    yield (piece, model, False)
+
+
+                if accumulated:
+                    # Signal end-of-stream with an empty string + True
+                    yield ("", model, True)
+                    return
+
+
+            except Exception as e:
+
+                last_error=e
+
+                err=str(e).lower()
+
+                if "429" in err or "quota" in err:
+
+                    time.sleep(
+                        2*(attempt+1)
+                    )
+                    continue
+
+                break
+
+
+    raise GeminiRateLimitError(
+        str(last_error)
+    )
 
 
 
