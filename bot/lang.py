@@ -552,14 +552,291 @@ EN: dict[str, str] = {
     "guest_name": "Guest",
 }
 
+# ── Russian ───────────────────────────────────────────────────────────────────
+
+RU: dict[str, str] = {
+    "welcome": (
+        "👋 <b>Привет, {name}!</b>\n\n"
+        "Я мощный бот на базе <b>Gemini AI</b>. 🚀\n\n"
+        "📝 <b>Что я умею:</b>\n"
+        "• Отвечать на вопросы\n"
+        "• Анализировать фото, голос и документы\n"
+        "• Помогать в 10 разных режимах\n"
+        "• Искать в интернете в реальном времени\n\n"
+        "Начни с кнопок ниже 👇"
+    ),
+    "welcome_referral_bonus": "\n\n🎁 Ты пришёл по реферальной ссылке — тебе начислено <b>+5 бонусных сообщений</b>!",
+    "welcome_premium_expiry": "\n\n⚠️ Твой Premium истекает через <b>{days_left} дней</b>! Продли с помощью /upgrade.",
+
+    "help": (
+        "ℹ️ <b>Как пользоваться</b>\n\n"
+        "💬 <b>Напиши текст</b> → AI ответит\n"
+        "🖼 <b>Отправь фото</b> → AI проанализирует\n"
+        "📄 <b>Документ/PDF</b> → AI прочитает и объяснит\n"
+        "🎙 <b>Голосовое сообщение</b> → AI послушает и ответит\n"
+        "😄 <b>Стикер</b> → AI считает эмоцию\n\n"
+        "<b>Команды:</b>\n"
+        "/mode — 🎭 Сменить режим AI (10 режимов)\n"
+        "/status — 📊 Информация о плане и лимите\n"
+        "/clear — 🗑 Очистить чат\n"
+        "/export — 📤 Скачать историю чата\n"
+        "/search — 🌐 Вкл/выкл поиск в интернете\n"
+        "/invite — 🎁 Пригласить друзей, получить бонус\n"
+        "/top — 🏆 Самые активные пользователи\n"
+        "/feedback — 💌 Отправить отзыв\n"
+        "/upgrade — ⭐ Купить Premium\n\n"
+        "💡 <b>Совет:</b> Используй бота в любом чате, написав @botusername!"
+    ),
+
+    "btn_mode":         "🎭 Выбрать режим",
+    "btn_status":       "📊 Статус",
+    "btn_internet":     "🌐 Интернет",
+    "btn_premium":      "⭐ Premium",
+    "btn_clear":        "🗑 Очистить чат",
+    "btn_export":       "📤 Экспорт",
+    "btn_invite":       "🎁 Пригласить",
+    "btn_top":          "🏆 ТОП",
+    "btn_help":         "ℹ️ Помощь",
+    "btn_feedback":     "💌 Отзыв",
+    "btn_back":         "⬅️ Главное меню",
+    "btn_back_short":   "⬅️ Назад",
+    "btn_retry":        "🔁 Повторить",
+    "btn_upgrade":      "⭐ Купить Premium",
+    "btn_invite_bonus": "🎁 Пригласить друга (+бонус)",
+    "btn_share_link":   "📤 Поделиться ссылкой",
+    "btn_refresh":      "🔄 Обновить",
+
+    "status_plan":        "{emoji} <b>План:</b> {plan}",
+    "status_mode":        "🎭 <b>Режим:</b> {mode}",
+    "status_internet":    "🌐 <b>Интернет:</b> {state}",
+    "status_limit":       "📊 <b>Лимит:</b> {used}/{limit}",
+    "status_remaining":   "✅ <b>Осталось:</b> {remaining} сообщений",
+    "status_until":       "📅 <b>Истекает:</b> {date} (осталось {days} дн.)",
+    "status_bonus":       "🎁 <b>Бонусные сообщения:</b> +{bonus}",
+    "status_upgrade_tip": "\n💡 Получи Premium через /upgrade → 500 сообщений/день",
+
+    "mode_select_title":   "🎭 <b>Выбери режим</b>",
+    "mode_select_header":  "🎭 <b>Выбери режим</b>\n\nКаждый режим активирует разную личность AI:",
+    "mode_changed":        "✅ Режим изменён: <b>{mode}</b>\n📝 {desc}\n\nНапиши мне! 👇",
+    "mode_selected_toast": "{mode} выбран!",
+    "mode_invalid":        "Неверный режим.",
+    "mode_current":        "Текущий режим: <b>{mode}</b>",
+
+    "clear_done":     "🗑 Чат очищен ({count} сообщений).\n\nНачни новый чат! 👇",
+    "clear_toast":    "Чат очищен!",
+    "clear_cmd_done": "🗑️ История чата удалена ({count} сообщений).\nМожешь начать новый чат!",
+
+    "search_on":       "✅ включён",
+    "search_off":      "❌ выключен",
+    "search_toggled":  "🌐 Поиск в интернете {status}.",
+    "search_toggled_detail": (
+        "🌐 Поиск в интернете {status}.\n\n"
+        "Когда включён, AI ищет актуальную информацию в сети."
+    ),
+
+    "invite_text": (
+        "🎁 <b>Приглашай друзей — получай бонусы!</b>\n\n"
+        "Каждый приглашённый друг даёт <b>вам обоим +5 бонусных сообщений</b>.\n\n"
+        "🔗 Твоя ссылка:\n<code>{link}</code>\n\n"
+        "👥 Всего приглашено: <b>{count}</b>\n"
+        "🎁 Заработано бонусов: <b>+{bonus}</b> сообщений"
+    ),
+    "invite_share_url": "Этот AI бот просто отличный!",
+
+    "export_empty":   "📭 У тебя пока нет истории чата.",
+    "export_caption": "📤 История чата ({count} сообщений)\n📅 Дата экспорта: {date}",
+    "export_user":    "👤 Ты",
+    "export_ai":      "🤖 AI",
+
+    "top_empty":       "Пока нет пользователей.",
+    "top_title":       "🏆 <b>Самые активные пользователи (сегодня)</b>\n",
+    "top_title_admin": "🏆 <b>ТОП 10 пользователей</b>\n",
+
+    "feedback_usage": (
+        "💌 Отправь отзыв вот так:\n"
+        "<code>/feedback Твой текст здесь</code>"
+    ),
+    "feedback_prompt": (
+        "💌 <b>Отзыв / Предложение</b>\n\n"
+        "Чтобы поделиться отзывом, предложением или сообщить о проблеме:\n\n"
+        "<code>/feedback [твой текст]</code>\n\n"
+        "Например: <code>/feedback Режим переводчика очень удобный!</code>"
+    ),
+    "feedback_sent":  "✅ Отзыв отправлен! Спасибо 🙏\nКаждое сообщение помогает улучшить бота.",
+    "feedback_saved": "✅ Отзыв сохранён! Спасибо 🙏",
+    "feedback_admin": "💌 <b>Новый отзыв!</b>\n\n👤 {name} (@{username}) [ID: {uid}]\n\n📝 {text}",
+
+    "upgrade_already":        "✅ Ты уже Premium пользователь!\n📅 Истекает: {until}\n⏳ Осталось: {days} дн.",
+    "upgrade_already_simple": "✅ Ты уже Premium пользователь!",
+    "upgrade_already_toast":  "Ты уже Premium! ⭐",
+    "upgrade_invoice_title":  "Premium план ⭐",
+    "upgrade_invoice_desc": (
+        "✨ {days} дней Premium:\n"
+        "• {premium_limit} сообщений/день (стандарт: {free_limit})\n"
+        "• Все 10 режимов AI\n"
+        "• Анализ документов/PDF\n"
+        "• Приоритетная поддержка"
+    ),
+    "upgrade_success": (
+        "🎉 <b>Оплата прошла успешно!</b>\n\n"
+        "⭐ Premium активирован!\n"
+        "📅 Истекает: {until}\n"
+        "📨 Дневной лимит: {limit} сообщений\n\n"
+        "Начинай пользоваться новыми возможностями! 🚀"
+    ),
+
+    "limit_exceeded": (
+        "⛔ <b>Дневной лимит исчерпан</b> ({limit}/{limit} сообщений)\n\n"
+        "Варианты:\n"
+        "• Лимит сбросится завтра\n"
+        "• Купи Premium через /upgrade (500 сообщений/день)\n"
+        "• Пригласи друга через /invite (бонусные сообщения)"
+    ),
+    "limit_warning":  "ℹ️ Осталось сегодня: <b>{remaining}/{limit}</b>\n💡 Купи Premium через /upgrade — 500 сообщений/день!",
+    "processing":     "⏳ Предыдущий запрос ещё обрабатывается, подожди...",
+    "db_error":       "😕 Произошла ошибка базы данных, попробуй позже.",
+    "ai_rate_limit":  "⏳ <b>AI перегружен</b>\nПопробуй снова через <b>{retry_after} секунд</b>.",
+    "ai_error":       "😕 AI не смог ответить. Попробуй позже.",
+
+    "retry_expired":  "⏰ Время истекло, напиши снова.",
+    "retry_trying":   "🔁 Повторная попытка...",
+
+    "photo_default_prompt":  "Что ты видишь на этом фото? Опиши подробно, перечисли всё.",
+    "doc_size_error":        "❌ Файл слишком большой ({size_mb:.1f} МБ).\nМаксимальный размер: {max_mb} МБ.",
+    "doc_format_error": (
+        "❌ Этот формат файла не поддерживается.\n\n"
+        "✅ Поддерживаемые форматы:\n"
+        "• PDF, TXT, CSV, JSON, HTML, Markdown, DOCX"
+    ),
+    "doc_default_prompt": (
+        "Прочитай этот документ внимательно и объясни его основное содержание. "
+        "Если это PDF, извлеки всю важную информацию."
+    ),
+    "voice_prompt": (
+        "Listen to this voice message and do two things:\n"
+        "1. Transcribe exactly what was said (just the words, no explanation)\n"
+        "2. Reply naturally to what was said\n\n"
+        "Format:\n"
+        "🎙 [exact transcription]\n\n"
+        "[your natural reply]\n\n"
+        "IMPORTANT: Reply in the SAME language as the voice message. "
+        "If they spoke Russian, reply in Russian. "
+        "Do NOT explain what the word means unless asked."
+    ),
+    "sticker_prompt": (
+        "Пользователь отправил тебе стикер с эмодзи '{emoji}'. "
+        "Дай короткий дружелюбный ответ, соответствующий этой эмоции. "
+        "Отвечай в том же тоне."
+    ),
+
+    "inline_type_hint":    "✍️ Введите вопрос...",
+    "inline_short_prompt": "Дай короткий и точный ответ (макс. 200 слов): {query}",
+    "inline_error":        "❌ Не удалось получить ответ. Попробуй позже.",
+    "inline_result_title": "🤖 Ответ AI",
+
+    "admin_panel":       "🛠 <b>Панель администратора</b>\n\nЧто хочешь сделать?",
+    "admin_no_perm":     "Нет доступа.",
+    "admin_grant_usage": "Использование: /grant <user_id> <free|premium>",
+    "admin_grant_done":  "✅ Пользователь {uid} → план: {plan}",
+    "admin_lookup_usage":"Использование: /lookup <user_id | @username>",
+    "admin_lookup_none": "❌ Не найден: <code>{query}</code>",
+    "admin_lookup_result": (
+        "👤 <b>Информация о пользователе</b>\n\n"
+        "🆔 ID:         <code>{uid}</code>\n"
+        "👤 Имя:        {first_name}\n"
+        "📛 Username:   @{username}\n"
+        "📦 План:       <b>{plan}</b>\n"
+        "📅 Premium:    {until}\n"
+        "🎭 Режим:      {mode}\n"
+        "💬 Сегодня:    {used}/{limit}\n"
+        "👥 Рефералы:   {refs}\n"
+        "📆 Регистрация:{created}"
+    ),
+    "admin_btn_stats":    "📊 Статистика",
+    "admin_btn_revenue":  "💰 Доходы",
+    "admin_btn_broadcast":"📢 Рассылка",
+    "admin_btn_lookup":   "🔍 Найти юзера",
+    "admin_btn_top":      "🏆 ТОП юзеры",
+    "admin_btn_expiring": "⏰ Истекают",
+    "admin_btn_premium":  "⭐ Дать Premium",
+    "admin_btn_free":     "🆓 Сделать Free",
+    "admin_btn_clear_h":  "🗑 Удалить историю",
+    "admin_btn_bonus":    "🎁 +10 Бонус",
+    "admin_stats": (
+        "📊 <b>Статистика бота</b>\n\n"
+        "👥 Всего пользователей: <b>{total:,}</b>\n"
+        "⭐ Premium:              <b>{premium:,}</b>\n"
+        "🆓 Бесплатных:          <b>{free:,}</b>\n"
+        "📈 Конверсия:           <b>{cvr:.1f}%</b>\n\n"
+        "🟢 Активны сегодня:     <b>{active:,}</b>\n"
+        "💬 Сообщений сегодня:   <b>{today_msg:,}</b>\n"
+        "📨 Всего сообщений:     <b>{total_msg:,}</b>"
+    ),
+    "admin_revenue": (
+        "💰 <b>Статистика доходов</b>\n\n"
+        "⭐ Всего Stars: <b>{total:,}</b>\n"
+        "📅 В этом месяце: <b>{month:,}</b> Stars\n"
+        "🧾 Всего платежей: <b>{count:,}</b>\n\n"
+        "💡 Средний платёж: <b>{avg:,}</b> Stars"
+    ),
+    "admin_expiring_none":  "Нет Premium, истекающих в ближайшие 3 дня.",
+    "admin_expiring_title": "⏰ <b>Premium, истекающий через 3 дня:</b>\n",
+    "admin_broadcast_prompt": (
+        "📢 <b>Рассылка</b>\n\n"
+        "<code>/broadcast Твой текст здесь</code>\n\n"
+        "⚠️ Будет отправлено всем пользователям!"
+    ),
+    "admin_broadcast_usage":    "Использование: /broadcast <текст>",
+    "admin_broadcast_starting": "⏳ Рассылка начата... ({total} пользователей)",
+    "admin_broadcast_done": (
+        "✅ <b>Рассылка завершена</b>\n\n"
+        "✉️ Отправлено: {sent}\n"
+        "❌ Ошибок: {failed}\n"
+        "📊 Всего: {total}"
+    ),
+    "admin_broadcast_prefix": "📢 <b>Сообщение от бота</b>\n\n{text}",
+    "admin_lookup_prompt": (
+        "🔍 <b>Найти пользователя</b>\n\n"
+        "<code>/lookup @username</code>\n"
+        "<code>/lookup 123456789</code>"
+    ),
+    "admin_grant_premium_done": "⭐ Premium выдан ({days} дней)",
+    "admin_grant_free_done":    "🆓 Переведён на бесплатный план",
+    "admin_clear_done":         "🗑 Удалено {count} сообщений",
+    "admin_bonus_done":         "🎁 +10 бонусных сообщений выдано!",
+
+    "top_row":            "{medal} {name} {plan_icon} — {usage} сообщений",
+    "status_today":       "📊 Сегодня: {used}/{limit} [{bar}]",
+    "status_until_short": "📅 Истекает: {date}",
+    "mode_row":           "{check} {name} — {desc}",
+    "inline_result_msg":  "❓ <b>{query}</b>\n\n🤖 {reply}",
+
+    "guest_name": "Гость",
+}
+
 # ── Registry & accessor ───────────────────────────────────────────────────────
 
 _LANGUAGES: dict[str, dict[str, str]] = {
     "az": AZ,
     "en": EN,
+    "ru": RU,
 }
 
 DEFAULT_LANG = "az"
+
+# Telegram sends full locale codes like "az-AZ", "en-US", "ru-RU".
+# Map them to our two-letter keys.
+_LANG_MAP: dict[str, str] = {
+    "az": "az", "en": "en", "ru": "ru",
+}
+
+
+def normalize_lang(raw: str | None) -> str:
+    """Convert a Telegram language_code (e.g. 'en-US', 'ru-RU') to our key."""
+    if not raw:
+        return DEFAULT_LANG
+    prefix = raw.split("-")[0].lower()
+    return _LANG_MAP.get(prefix, DEFAULT_LANG)
 
 
 def t(key: str, lang: str | None = None, **kwargs) -> str:
@@ -567,35 +844,104 @@ def t(key: str, lang: str | None = None, **kwargs) -> str:
 
     Extra keyword arguments are passed to str.format().
     """
-    lng = lang or DEFAULT_LANG
+    lng = normalize_lang(lang)
     table = _LANGUAGES.get(lng) or _LANGUAGES.get(DEFAULT_LANG) or EN
     text = table.get(key) or EN.get(key) or key
     return text.format(**kwargs) if kwargs else text
 
 
 # ── AI Modes ─────────────────────────────────────────────────────────────────
-MODE_NAMES = {
-    "default": "🤖 Standart",
-    "teacher": "📚 Müəllim",
-    "coder": "💻 Proqramçı",
-    "friend": "😊 Dost",
-    "translator": "🌐 Tərcüməçi",
-    "writer": "✍️ Yazıçı",
-    "analyst": "📊 Analitik",
-    "creative": "🎨 Kreativ",
-    "fitness": "💪 Fitnes",
-    "chef": "👨‍🍳 Aşpaz",
+
+_MODE_NAMES: dict[str, dict[str, str]] = {
+    "az": {
+        "default":    "🤖 Standart",
+        "teacher":    "📚 Müəllim",
+        "coder":      "💻 Proqramçı",
+        "friend":     "😊 Dost",
+        "translator": "🌐 Tərcüməçi",
+        "writer":     "✍️ Yazıçı",
+        "analyst":    "📊 Analitik",
+        "creative":   "🎨 Kreativ",
+        "fitness":    "💪 Fitnes",
+        "chef":       "👨‍🍳 Aşpaz",
+    },
+    "en": {
+        "default":    "🤖 Standard",
+        "teacher":    "📚 Teacher",
+        "coder":      "💻 Coder",
+        "friend":     "😊 Friend",
+        "translator": "🌐 Translator",
+        "writer":     "✍️ Writer",
+        "analyst":    "📊 Analyst",
+        "creative":   "🎨 Creative",
+        "fitness":    "💪 Fitness",
+        "chef":       "👨‍🍳 Chef",
+    },
+    "ru": {
+        "default":    "🤖 Стандарт",
+        "teacher":    "📚 Учитель",
+        "coder":      "💻 Программист",
+        "friend":     "😊 Друг",
+        "translator": "🌐 Переводчик",
+        "writer":     "✍️ Писатель",
+        "analyst":    "📊 Аналитик",
+        "creative":   "🎨 Креатив",
+        "fitness":    "💪 Фитнес",
+        "chef":       "👨‍🍳 Повар",
+    },
 }
 
-MODE_DESCRIPTIONS = {
-    "default": "Normal AI köməkçi",
-    "teacher": "Addım-addım izah edir",
-    "coder": "Kod yazır və debug edir",
-    "friend": "Səmimi danışır",
-    "translator": "Tərcümə edir",
-    "writer": "Mətn yaradır",
-    "analyst": "Analiz edir",
-    "creative": "İdeyalar verir",
-    "fitness": "Məşq köməkçisi",
-    "chef": "Yemək köməkçisi",
+_MODE_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "az": {
+        "default":    "Normal AI köməkçi",
+        "teacher":    "Addım-addım izah edir",
+        "coder":      "Kod yazır və debug edir",
+        "friend":     "Səmimi danışır",
+        "translator": "Tərcümə edir",
+        "writer":     "Mətn yaradır",
+        "analyst":    "Analiz edir",
+        "creative":   "İdeyalar verir",
+        "fitness":    "Məşq köməkçisi",
+        "chef":       "Yemək köməkçisi",
+    },
+    "en": {
+        "default":    "General AI assistant",
+        "teacher":    "Explains step by step",
+        "coder":      "Writes and debugs code",
+        "friend":     "Talks casually",
+        "translator": "Translates text",
+        "writer":     "Creates written content",
+        "analyst":    "Analyzes data",
+        "creative":   "Generates ideas",
+        "fitness":    "Workout assistant",
+        "chef":       "Cooking assistant",
+    },
+    "ru": {
+        "default":    "Обычный AI помощник",
+        "teacher":    "Объясняет пошагово",
+        "coder":      "Пишет и отлаживает код",
+        "friend":     "Общается по-дружески",
+        "translator": "Переводит текст",
+        "writer":     "Создаёт тексты",
+        "analyst":    "Анализирует данные",
+        "creative":   "Генерирует идеи",
+        "fitness":    "Помощник по тренировкам",
+        "chef":       "Кулинарный помощник",
+    },
 }
+
+# Backward-compatible flat dicts (AZ by default) so existing imports don't break
+MODE_NAMES = _MODE_NAMES["az"]
+MODE_DESCRIPTIONS = _MODE_DESCRIPTIONS["az"]
+
+
+def mode_name(mode: str, lang: str | None = None) -> str:
+    """Return localized mode name."""
+    lng = normalize_lang(lang)
+    return _MODE_NAMES.get(lng, _MODE_NAMES["az"]).get(mode, mode)
+
+
+def mode_desc(mode: str, lang: str | None = None) -> str:
+    """Return localized mode description."""
+    lng = normalize_lang(lang)
+    return _MODE_DESCRIPTIONS.get(lng, _MODE_DESCRIPTIONS["az"]).get(mode, mode)

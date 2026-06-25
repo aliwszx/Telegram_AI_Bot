@@ -37,10 +37,10 @@ from bot.memory import build_enriched_history, store_embedding_async
 from bot.ai import (
     generate_reply, generate_reply_stream, generate_quick_reply,
     GeminiError, GeminiRateLimitError,
-    MODE_NAMES, MODE_DESCRIPTIONS,
 )
 from bot.config import settings
-from bot.lang import t  # <-- localization
+from bot.lang import t, mode_name, mode_desc, MODE_NAMES, MODE_DESCRIPTIONS
+import bot.lang as lang_module
 
 try:
     import sentry_sdk
@@ -112,9 +112,10 @@ def _is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids
 
 
-def _lang(user) -> str | None:
-    """Extract language code from a Telegram user object (or None)."""
-    return getattr(user, "language_code", None)
+def _lang(user) -> str:
+    """Extract and normalize language code from a Telegram user object."""
+    raw = getattr(user, "language_code", None)
+    return lang_module.normalize_lang(raw)
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────
@@ -145,11 +146,12 @@ def _start_keyboard(lang=None) -> InlineKeyboardMarkup:
 
 
 def _mode_keyboard(current: str | None = None, lang=None) -> InlineKeyboardMarkup:
-    mode_items = list(MODE_NAMES.items())
     buttons = []
-    for i in range(0, len(mode_items), 2):
+    mode_keys = list(MODE_NAMES.keys())
+    for i in range(0, len(mode_keys), 2):
         row = []
-        for key, label in mode_items[i:i+2]:
+        for key in mode_keys[i:i+2]:
+            label = mode_name(key, lang)
             tick = " ✓" if key == current else ""
             row.append(InlineKeyboardButton(
                 text=f"{label}{tick}",
@@ -195,10 +197,10 @@ def _onboard_step1_kb(lang=None) -> InlineKeyboardMarkup:
 
 def _onboard_step2_kb(lang=None) -> InlineKeyboardMarkup:
     """Step 2 — pick a mode (filtered to 4 most relevant)."""
-    items = list(MODE_NAMES.items())[:4]
+    mode_keys = list(MODE_NAMES.keys())[:4]
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{v}", callback_data=f"ob:mode:{k}")]
-        for k, v in items
+        [InlineKeyboardButton(text=mode_name(k, lang), callback_data=f"ob:mode:{k}")]
+        for k in mode_keys
     ] + [[InlineKeyboardButton(text="Hamısını gör →", callback_data="ob:mode:_all")]])
 
 
@@ -292,7 +294,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
         await callback.message.edit_text(
             f"✅ <b>{goal_labels.get(value, value)}</b> seçildi.\n\n"
             f"<b>Addım 2/3</b> — AI rejiminizi seçin:\n"
-            f"<i>(Tövsiyə olunan: <b>{MODE_NAMES.get(suggested_mode, suggested_mode)}</b>)</i>",
+            f"<i>(Tövsiyə olunan: <b>{mode_name(suggested_mode, lang)}</b>)</i>",
             reply_markup=_onboard_step2_kb(lang),
             parse_mode="HTML",
         )
@@ -316,7 +318,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
         _onboarding[user.id] = 3
 
         await callback.message.edit_text(
-            f"✅ <b>{MODE_NAMES.get(value, value)}</b> rejimi aktivdir.\n\n"
+            f"✅ <b>{mode_name(value, lang)}</b> rejimi aktivdir.\n\n"
             "🎉 <b>Addım 3/3</b> — Hər şey hazırdır!\n\n"
             "İlk sualınızı yazın — cavablayıram! 👇\n\n"
             "<i>İstənilən vaxt /help ilə bütün əmrləri görə bilərsiniz.</i>",
@@ -325,7 +327,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
             ]),
             parse_mode="HTML",
         )
-        await callback.answer(f"✅ {MODE_NAMES.get(value, value)} aktiv!")
+        await callback.answer(f"✅ {mode_name(value, lang)} aktiv!")
 
     # ── Finish — show main menu ────────────────────────────────────────────
     elif action == "finish":
@@ -365,7 +367,7 @@ async def cmd_status(message: Message) -> None:
     plan_emoji = "⭐" if plan == "premium" else "🆓"
     lines = [
         t("status_plan", lang, emoji=plan_emoji, plan=plan.upper()),
-        t("status_mode", lang, mode=MODE_NAMES.get(mode, mode)),
+        t("status_mode", lang, mode=mode_name(mode, lang)),
         t("status_internet", lang, state="✅" if web else "❌"),
         "",
         t("status_limit", lang, used=used_today, limit=limit),
@@ -390,12 +392,12 @@ async def cmd_mode(message: Message) -> None:
     row = await _get_user(user.id, user.username, user.first_name)
     current = db.get_chat_mode(row)
     mode_list = "\n".join(
-        t("mode_row", lang, check="✅" if k == current else "▫️", name=v, desc=MODE_DESCRIPTIONS[k])
-        for k, v in MODE_NAMES.items()
+        t("mode_row", lang, check="✅" if k == current else "▫️", name=mode_name(k, lang), desc=mode_desc(k, lang))
+        for k in MODE_NAMES
     )
     await message.answer(
         f"{t('mode_select_title', lang)}\n\n{mode_list}\n\n"
-        + t("mode_current", lang, mode=MODE_NAMES.get(current, current)),
+        + t("mode_current", lang, mode=mode_name(current, lang)),
         reply_markup=_mode_keyboard(current, lang),
         parse_mode="HTML",
     )
@@ -411,11 +413,11 @@ async def cb_mode_select(callback: CallbackQuery) -> None:
 
     await asyncio.to_thread(db.set_chat_mode, callback.from_user.id, mode)
     await callback.message.edit_text(
-        t("mode_changed", lang, mode=MODE_NAMES[mode], desc=MODE_DESCRIPTIONS[mode]),
+        t("mode_changed", lang, mode=mode_name(mode, lang), desc=mode_desc(mode, lang)),
         reply_markup=_start_keyboard(lang),
         parse_mode="HTML",
     )
-    await callback.answer(t("mode_selected_toast", lang, mode=MODE_NAMES[mode]))
+    await callback.answer(t("mode_selected_toast", lang, mode=mode_name(mode, lang)))
     await asyncio.to_thread(db.clear_history, callback.from_user.id)
 
 
@@ -457,7 +459,7 @@ async def cb_menu(callback: CallbackQuery) -> None:
         bar = "█" * bar_filled + "░" * (10 - bar_filled)
         lines = [
             t("status_plan", lang, emoji=plan_emoji, plan=plan.upper()),
-            t("status_mode", lang, mode=MODE_NAMES.get(mode, mode)),
+            t("status_mode", lang, mode=mode_name(mode, lang)),
             t("status_today", lang, used=used_today, limit=limit, bar=bar),
             t("status_remaining", lang, remaining=remaining),
         ]
@@ -634,7 +636,7 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
 
     text = command.args.strip()
 
-    # ✅ Database-ə yaz
+    # Save to database
     await asyncio.to_thread(db.save_feedback, user.id, text)
 
     feedback_text = t(
@@ -1097,7 +1099,7 @@ async def cmd_lookup(message: Message, command: CommandObject) -> None:
         username=user.get("username") or "—",
         plan=plan,
         until=until,
-        mode=MODE_NAMES.get(mode, mode),
+        mode=mode_name(mode, lang),
         used=usage,
         limit=limit,
         refs=ref_count,

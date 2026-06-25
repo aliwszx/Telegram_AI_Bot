@@ -22,7 +22,7 @@ from google import genai
 from google.genai import types
 
 from bot.config import settings
-from bot.lang import MODE_NAMES, MODE_DESCRIPTIONS
+from bot.lang import MODE_NAMES, MODE_DESCRIPTIONS, mode_desc
 
 logger = logging.getLogger(__name__)
 
