@@ -531,8 +531,6 @@ async def cb_menu(callback: CallbackQuery) -> None:
         await callback.message.answer(t("feedback_prompt", lang), parse_mode="HTML")
 
     elif action == "language":
-        row = await _get_user(user.id, user.username, user.first_name)
-        lang = _lang_from_row(user, row)
         current_label = LANGUAGE_LABELS.get(lang, lang)
         await callback.message.edit_text(
             t("lang_select_title", lang, current=current_label),
