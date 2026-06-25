@@ -318,19 +318,52 @@ def clear_history(user_id: int) -> int:
 
 @with_retry()
 def get_stats() -> dict:
-    today = _today()
+    """
+    Single RPC call → all admin stats in one round-trip.
+    Falls back to the old 5-query path if the RPC is not yet deployed.
+
+    Deploy this function in Supabase SQL editor once:
+
+        create or replace function get_bot_stats()
+        returns json language sql stable as $$
+          select json_build_object(
+            'total_users',    (select count(*) from users),
+            'premium_users',  (select count(*) from users where plan = 'premium'),
+            'active_today',   (select count(*) from users
+                                where last_usage_date = current_date::text),
+            'messages_today', (select count(*) from messages
+                                where created_at >= current_date),
+            'total_messages', (select count(*) from messages),
+            'revenue_total',  coalesce((select sum(stars) from payments), 0),
+            'revenue_month',  coalesce((select sum(stars) from payments
+                                where created_at >= date_trunc('month', now())), 0),
+            'payment_count',  coalesce((select count(*) from payments), 0)
+          )
+        $$;
+    """
+    try:
+        result = _client.rpc("get_bot_stats", {}).execute()
+        if result.data:
+            data = result.data
+            # RPC may return a list with one element or the dict directly
+            if isinstance(data, list):
+                data = data[0]
+            if isinstance(data, dict):
+                return {k: int(v or 0) for k, v in data.items()}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_bot_stats RPC failed, using fallback: %s", exc)
+
+    # ── fallback: original multi-query path ───────────────────────────────
+    today_str = _today()
     this_month_start = dt.date.today().replace(day=1).isoformat()
 
-    total         = _client.table("users").select("id", count="exact").execute()
-    premium       = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
-    active_today  = _client.table("users").select("id", count="exact").eq("last_usage_date", today).execute()
-    msgs_today    = _client.table("messages").select("id", count="exact").gte("created_at", f"{today}T00:00:00").execute()
-    total_msgs    = _client.table("messages").select("id", count="exact").execute()
+    total        = _client.table("users").select("id", count="exact").execute()
+    premium      = _client.table("users").select("id", count="exact").eq("plan", "premium").execute()
+    active_today = _client.table("users").select("id", count="exact").eq("last_usage_date", today_str).execute()
+    msgs_today   = _client.table("messages").select("id", count="exact").gte("created_at", f"{today_str}T00:00:00").execute()
+    total_msgs   = _client.table("messages").select("id", count="exact").execute()
 
-    # Revenue stats (if payments table exists)
-    revenue_total = 0
-    revenue_month = 0
-    payment_count = 0
+    revenue_total = revenue_month = payment_count = 0
     try:
         rev = _client.table("payments").select("stars").execute()
         if rev.data:
@@ -390,7 +423,37 @@ def get_users_expiring_soon(days: int) -> list[dict]:
 
 @with_retry()
 def get_top_users(limit: int = 10) -> list[dict]:
-    """Returns top users by total messages sent."""
+    """
+    Returns top users by *total* messages sent — single RPC, no N+1.
+
+    Deploy once in Supabase SQL editor:
+
+        create or replace function get_top_users(p_limit int default 10)
+        returns table (
+            id          bigint,
+            first_name  text,
+            username    text,
+            plan        text,
+            daily_usage int,
+            total_msgs  bigint
+        ) language sql stable as $$
+          select u.id, u.first_name, u.username, u.plan, u.daily_usage,
+                 count(m.id) as total_msgs
+          from users u
+          left join messages m on m.user_id = u.id
+          group by u.id
+          order by total_msgs desc
+          limit p_limit;
+        $$;
+    """
+    try:
+        result = _client.rpc("get_top_users", {"p_limit": limit}).execute()
+        if result.data:
+            return result.data
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_top_users RPC failed, using fallback: %s", exc)
+
+    # Fallback — single table query (no JOIN), ranks by daily_usage
     result = (
         _client.table("users")
         .select("id, first_name, username, plan, daily_usage")
