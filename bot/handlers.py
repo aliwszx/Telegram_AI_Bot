@@ -633,6 +633,10 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
         return
 
     text = command.args.strip()
+
+    # ✅ Database-ə yaz
+    await asyncio.to_thread(db.save_feedback, user.id, text)
+
     feedback_text = t(
         "feedback_admin", lang,
         name=user.first_name or "",
