@@ -32,6 +32,7 @@ from aiogram.types import (
 )
 
 from bot import db
+from bot.memory import build_enriched_history, store_embedding_async
 from bot.ai import (
     generate_reply, generate_reply_stream, generate_quick_reply,
     GeminiError, GeminiRateLimitError,
@@ -50,6 +51,12 @@ router = Router(name="main")
 
 # In-memory cache of last failed request per user (for retry button)
 _last_failed: dict[int, dict] = {}
+
+# ── Broadcast state ────────────────────────────────────────────────────────
+# Keyed by admin user_id
+_broadcast_pending: dict[int, dict] = {}   # {admin_id: {"variants": [...], "mode": "single"|"ab"}}
+_broadcast_active:  dict[int, asyncio.Task] = {}  # running tasks
+_broadcast_stats:   dict[int, dict] = {}   # live progress
 
 # Per-user lock: prevent the same user from sending multiple concurrent requests
 _user_locks: dict[int, asyncio.Lock] = {}
@@ -692,35 +699,192 @@ async def cb_admin(callback: CallbackQuery) -> None:
         await callback.answer()
 
 
+# ── Broadcast helpers ─────────────────────────────────────────────────────
+
+# Telegram hard limit: 30 messages/sec across all chats
+_BROADCAST_RATE   = 25          # msg/sec (slightly below limit)
+_BROADCAST_CHUNK  = 25          # send this many, then sleep
+_PROGRESS_EVERY   = 50          # edit status every N sends
+
+
+def _broadcast_preview_kb(admin_id: int, lang=None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Send", callback_data=f"bc:confirm:{admin_id}"),
+            InlineKeyboardButton(text="❌ Cancel", callback_data=f"bc:cancel:{admin_id}"),
+        ],
+    ])
+
+
+def _broadcast_live_kb(admin_id: int, lang=None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⛔ Stop broadcast", callback_data=f"bc:stop:{admin_id}")],
+    ])
+
+
+async def _run_broadcast(
+    bot,
+    admin_id: int,
+    status_msg,
+    user_ids: list[int],
+    variants: list[str],
+) -> None:
+    """
+    Async broadcast worker.
+    • Single variant  → same message to everyone.
+    • Two variants    → A/B split (odd/even index).
+    Rate-limited to _BROADCAST_RATE msg/sec via chunked sleep.
+    """
+    stats = {"sent": 0, "failed": 0, "total": len(user_ids), "stopped": False}
+    _broadcast_stats[admin_id] = stats
+    ab_mode = len(variants) == 2
+
+    try:
+        for i, uid in enumerate(user_ids):
+            if stats["stopped"]:
+                break
+
+            text = variants[i % len(variants)]
+
+            try:
+                await bot.send_message(uid, text, parse_mode="HTML")
+                stats["sent"] += 1
+            except Exception:  # noqa: BLE001
+                stats["failed"] += 1
+
+            # Rate limiting: sleep after every chunk
+            if (i + 1) % _BROADCAST_CHUNK == 0:
+                await asyncio.sleep(_BROADCAST_CHUNK / _BROADCAST_RATE)
+
+            # Live progress update
+            if (i + 1) % _PROGRESS_EVERY == 0 or (i + 1) == len(user_ids):
+                pct = int((i + 1) / len(user_ids) * 100)
+                bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+                ab_note = " (A/B)" if ab_mode else ""
+                try:
+                    await status_msg.edit_text(
+                        f"📡 <b>Broadcasting{ab_note}…</b>\n"
+                        f"[{bar}] {pct}%\n"
+                        f"✅ {stats['sent']}  ❌ {stats['failed']}  / {stats['total']}",
+                        parse_mode="HTML",
+                        reply_markup=_broadcast_live_kb(admin_id),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
+    finally:
+        _broadcast_active.pop(admin_id, None)
+        stopped_note = "\n⛔ <b>Stopped early.</b>" if stats["stopped"] else ""
+        ab_note = " (A/B)" if ab_mode else ""
+        try:
+            await status_msg.edit_text(
+                f"✅ <b>Broadcast done{ab_note}</b>{stopped_note}\n"
+                f"Sent: {stats['sent']}  Failed: {stats['failed']}  Total: {stats['total']}",
+                parse_mode="HTML",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ── /broadcast command ─────────────────────────────────────────────────────
+# Usage:
+#   /broadcast Hello everyone!          — single message, preview before send
+#   /broadcast A: Hello || B: Hi there  — A/B test, || separates variants
+
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message, command: CommandObject) -> None:
     if not _is_admin(message.from_user.id):
         return
-    lang = _lang(message.from_user)
+    lang  = _lang(message.from_user)
+    admin = message.from_user.id
+
     if not command.args:
-        await message.answer(t("admin_broadcast_usage", lang))
+        await message.answer(
+            "Usage:\n"
+            "<code>/broadcast Your message here</code>\n"
+            "<code>/broadcast A: Variant A || B: Variant B</code>  (A/B test)",
+            parse_mode="HTML",
+        )
         return
 
-    text = command.args.strip()
-    broadcast_text = t("admin_broadcast_prefix", lang, text=text)
+    raw = command.args.strip()
+
+    # Parse A/B variants
+    if "||" in raw:
+        parts = [p.strip() for p in raw.split("||", 1)]
+        # Strip optional "A: " / "B: " prefixes
+        def _strip_prefix(s: str) -> str:
+            if s[:3] in ("A: ", "B: ", "a: ", "b: "):
+                return s[3:]
+            return s
+        variants = [_strip_prefix(p) for p in parts if p]
+    else:
+        variants = [raw]
+
+    _broadcast_pending[admin] = {"variants": variants}
 
     user_ids = await asyncio.to_thread(db.get_all_user_ids)
-    total = len(user_ids)
-    status_msg = await message.answer(t("admin_broadcast_starting", lang, total=total))
+    ab_label = " (A/B test — 2 variants)" if len(variants) == 2 else ""
+    preview_lines = [f"📢 <b>Broadcast preview{ab_label}</b>  —  {len(user_ids)} users\n"]
+    for idx, v in enumerate(variants):
+        label = f"Variant {'AB'[idx]}" if len(variants) == 2 else "Message"
+        preview_lines.append(f"<b>{label}:</b>\n{v}")
 
-    sent = failed = 0
-    for uid in user_ids:
-        try:
-            await message.bot.send_message(uid, broadcast_text, parse_mode="HTML")
-            sent += 1
-        except Exception:  # noqa: BLE001
-            failed += 1
-        await asyncio.sleep(0.05)
-
-    await status_msg.edit_text(
-        t("admin_broadcast_done", lang, sent=sent, failed=failed, total=total),
+    await message.answer(
+        "\n\n".join(preview_lines),
         parse_mode="HTML",
+        reply_markup=_broadcast_preview_kb(admin, lang),
     )
+
+
+@router.callback_query(F.data.startswith("bc:"))
+async def cb_broadcast(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("No permission.", show_alert=True)
+        return
+
+    _, action, admin_id_str = callback.data.split(":", 2)
+    admin_id = int(admin_id_str)
+
+    # Only the admin who initiated can act
+    if callback.from_user.id != admin_id:
+        await callback.answer("Not your broadcast.", show_alert=True)
+        return
+
+    if action == "cancel":
+        _broadcast_pending.pop(admin_id, None)
+        await callback.message.edit_text("❌ Broadcast cancelled.")
+        await callback.answer()
+        return
+
+    if action == "stop":
+        stats = _broadcast_stats.get(admin_id)
+        if stats:
+            stats["stopped"] = True
+        await callback.answer("⛔ Stop signal sent.", show_alert=True)
+        return
+
+    if action == "confirm":
+        pending = _broadcast_pending.pop(admin_id, None)
+        if not pending:
+            await callback.answer("Session expired — please run /broadcast again.", show_alert=True)
+            return
+
+        variants  = pending["variants"]
+        user_ids  = await asyncio.to_thread(db.get_all_user_ids)
+
+        ab_note   = " (A/B)" if len(variants) == 2 else ""
+        status_msg = await callback.message.edit_text(
+            f"⏳ <b>Starting broadcast{ab_note}…</b>  {len(user_ids)} users",
+            parse_mode="HTML",
+            reply_markup=_broadcast_live_kb(admin_id),
+        )
+        await callback.answer()
+
+        task = asyncio.create_task(
+            _run_broadcast(callback.bot, admin_id, status_msg, user_ids, variants)
+        )
+        _broadcast_active[admin_id] = task
 
 
 @router.message(Command("lookup"))
@@ -1019,8 +1183,10 @@ async def _handle_ai_message(
 
         await message.bot.send_chat_action(message.chat.id, "typing")
 
-        history    = ctx["history"]
-        mode       = ctx.get("chat_mode") or "default"
+        raw_history = ctx["history"]
+        mode        = ctx.get("chat_mode") or "default"
+        # Enrich history: summary compression + semantic recall
+        history = build_enriched_history(user.id, raw_history, user_text or "")
         usage      = ctx["usage"]
         limit      = ctx["limit"]
         web_search = ctx.get("web_search", False)
@@ -1065,6 +1231,10 @@ async def _handle_ai_message(
             asyncio.to_thread(db.save_message, user.id, "user", history_label),
             asyncio.to_thread(db.save_message, user.id, "assistant", reply_text),
         )
+        # Fire-and-forget: store embeddings for semantic recall (no-op if pgvector unavailable)
+        if history_label:
+            store_embedding_async(user.id, None, "user", history_label)
+        store_embedding_async(user.id, None, "assistant", reply_text)
 
         from bot import cache as redis_cache
         await redis_cache.invalidate_user(user.id)
@@ -1150,17 +1320,34 @@ async def handle_document(message: Message) -> None:
 
 # ── Voice / audio messages ─────────────────────────────────────────────────
 
+# Mime types Gemini audio understands natively (Gemini 2.0+ transcribes inline)
+_GEMINI_AUDIO_MIMES = {
+    "audio/ogg", "audio/mpeg", "audio/mp4", "audio/wav",
+    "audio/webm", "audio/flac", "audio/aac", "audio/x-m4a",
+}
+
+
 @router.message(F.voice | F.audio)
 async def handle_voice(message: Message) -> None:
     lang = _lang(message.from_user)
     media = message.voice or message.audio
+
+    # Telegram voice notes are always audio/ogg (opus).
+    # Regular audio files may carry their own mime_type.
     mime = getattr(media, "mime_type", None) or "audio/ogg"
+    # Normalise: Telegram sometimes sends "audio/ogg; codecs=opus"
+    mime = mime.split(";")[0].strip()
+    # Fall back to ogg if mime is unknown to Gemini
+    if mime not in _GEMINI_AUDIO_MIMES:
+        mime = "audio/ogg"
 
     await message.bot.send_chat_action(message.chat.id, "typing")
     file = await message.bot.get_file(media.file_id)
     downloaded = await message.bot.download_file(file.file_path)
     audio_bytes = downloaded.read()
 
+    # Pass raw audio bytes to Gemini — it transcribes *and* replies in one
+    # shot without a separate STT call (Gemini 2.0+ native audio support).
     prompt = t("voice_prompt", lang)
     await _handle_ai_message(message, prompt, media_bytes=audio_bytes, media_mime=mime)
 
