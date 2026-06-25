@@ -61,6 +61,12 @@ AZ: dict[str, str] = {
     "btn_invite_bonus":"🎁 Dost dəvət et (+bonus)",
     "btn_share_link":  "📤 Linki paylaş",
     "btn_refresh":     "🔄 Yenilə",
+    "btn_language":    "🌍 Dil",
+
+    # ── Language selection ────────────────────────────────────────────────────
+    "lang_select_title": "🌍 <b>Dil seçin</b>\n\nHazırki dil: <b>{current}</b>",
+    "lang_changed":      "✅ Dil dəyişdirildi: <b>{lang}</b>",
+    "lang_already":      "ℹ️ Dil artıq <b>{lang}</b> olaraq təyin edilib.",
 
     # ── Status ────────────────────────────────────────────────────────────────
     "status_plan":        "{emoji} <b>Plan:</b> {plan}",
@@ -343,6 +349,11 @@ EN: dict[str, str] = {
     "btn_invite_bonus":"🎁 Invite friend (+bonus)",
     "btn_share_link":  "📤 Share link",
     "btn_refresh":     "🔄 Refresh",
+    "btn_language":    "🌍 Language",
+
+    "lang_select_title": "🌍 <b>Select language</b>\n\nCurrent: <b>{current}</b>",
+    "lang_changed":      "✅ Language changed: <b>{lang}</b>",
+    "lang_already":      "ℹ️ Language is already set to <b>{lang}</b>.",
 
     "status_plan":        "{emoji} <b>Plan:</b> {plan}",
     "status_mode":        "🎭 <b>Mode:</b> {mode}",
@@ -605,6 +616,11 @@ RU: dict[str, str] = {
     "btn_invite_bonus": "🎁 Пригласить друга (+бонус)",
     "btn_share_link":   "📤 Поделиться ссылкой",
     "btn_refresh":      "🔄 Обновить",
+    "btn_language":     "🌍 Язык",
+
+    "lang_select_title": "🌍 <b>Выберите язык</b>\n\nТекущий: <b>{current}</b>",
+    "lang_changed":      "✅ Язык изменён: <b>{lang}</b>",
+    "lang_already":      "ℹ️ Язык уже установлен: <b>{lang}</b>.",
 
     "status_plan":        "{emoji} <b>План:</b> {plan}",
     "status_mode":        "🎭 <b>Режим:</b> {mode}",
@@ -945,3 +961,15 @@ def mode_desc(mode: str, lang: str | None = None) -> str:
     """Return localized mode description."""
     lng = normalize_lang(lang)
     return _MODE_DESCRIPTIONS.get(lng, _MODE_DESCRIPTIONS["az"]).get(mode, mode)
+
+
+# ── Language metadata ─────────────────────────────────────────────────────────
+
+# Display label shown on the button / in messages for each language code
+LANGUAGE_LABELS: dict[str, str] = {
+    "az": "🇦🇿 Azərbaycan",
+    "en": "🇬🇧 English",
+    "ru": "🇷🇺 Русский",
+}
+
+SUPPORTED_LANGS = list(_LANGUAGES.keys())

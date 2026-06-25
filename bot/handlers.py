@@ -39,7 +39,7 @@ from bot.ai import (
     GeminiError, GeminiRateLimitError,
 )
 from bot.config import settings
-from bot.lang import t, mode_name, mode_desc, MODE_NAMES, MODE_DESCRIPTIONS
+from bot.lang import t, mode_name, mode_desc, MODE_NAMES, MODE_DESCRIPTIONS, LANGUAGE_LABELS, SUPPORTED_LANGS
 import bot.lang as lang_module
 
 try:
@@ -113,9 +113,27 @@ def _is_admin(user_id: int) -> bool:
 
 
 def _lang(user) -> str:
-    """Extract and normalize language code from a Telegram user object."""
+    """Extract and normalize language code from a Telegram user object.
+
+    Priority: Telegram locale → normalize to supported lang.
+    For DB-aware language (preferred_lang), use _lang_from_row().
+    """
     raw = getattr(user, "language_code", None)
     return lang_module.normalize_lang(raw)
+
+
+def _lang_from_row(user_obj, db_row: dict | None) -> str:
+    """Return the user's preferred language.
+
+    Priority:
+      1. preferred_lang saved in DB (user manually chose it)
+      2. Telegram language_code normalized to supported lang
+    """
+    if db_row:
+        preferred = db.get_preferred_lang(db_row)
+        if preferred:
+            return preferred
+    return _lang(user_obj)
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────
@@ -141,6 +159,9 @@ def _start_keyboard(lang=None) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text=t("btn_help", lang),    callback_data="menu:help"),
             InlineKeyboardButton(text=t("btn_feedback", lang),callback_data="menu:feedback"),
+        ],
+        [
+            InlineKeyboardButton(text=t("btn_language", lang), callback_data="menu:language"),
         ],
     ])
 
@@ -216,7 +237,6 @@ _GOAL_MODE: dict[str, str] = {
 @router.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
     user = message.from_user
-    lang = _lang(user)
 
     referred_by = None
     if command.args and command.args.startswith("ref_"):
@@ -228,6 +248,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             pass
 
     row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     await asyncio.to_thread(db.update_user_language, user.id, user.language_code)
 
     name = user.first_name or user.username or t("guest_name", lang)
@@ -343,15 +364,17 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    lang = _lang(message.from_user)
+    user = message.from_user
+    row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     await message.answer(t("help", lang), reply_markup=_back_keyboard(lang), parse_mode="HTML")
 
 
 @router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
     user = message.from_user
-    lang = _lang(user)
     row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     plan = await asyncio.to_thread(db.effective_plan, row)
     limit = db.get_daily_limit(plan, row.get("bonus_messages", 0) or 0)
     usage = row.get("daily_usage", 0)
@@ -425,7 +448,8 @@ async def cb_mode_select(callback: CallbackQuery) -> None:
 async def cb_menu(callback: CallbackQuery) -> None:
     action = callback.data.split(":", 1)[1]
     user = callback.from_user
-    lang = _lang(user)
+    _row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _row)
 
     if action == "back":
         name = user.first_name or user.username or t("guest_name", lang)
@@ -505,6 +529,17 @@ async def cb_menu(callback: CallbackQuery) -> None:
     elif action == "feedback":
         await callback.answer()
         await callback.message.answer(t("feedback_prompt", lang), parse_mode="HTML")
+
+    elif action == "language":
+        row = await _get_user(user.id, user.username, user.first_name)
+        lang = _lang_from_row(user, row)
+        current_label = LANGUAGE_LABELS.get(lang, lang)
+        await callback.message.edit_text(
+            t("lang_select_title", lang, current=current_label),
+            reply_markup=_language_keyboard(lang),
+            parse_mode="HTML",
+        )
+        await callback.answer()
 
     elif action == "help":
         await callback.message.edit_text(
@@ -624,6 +659,67 @@ async def cmd_search(message: Message) -> None:
     await asyncio.to_thread(db.set_web_search, user.id, new_state)
     status = t("search_on", lang) if new_state else t("search_off", lang)
     await message.answer(t("search_toggled_detail", lang, status=status))
+
+
+# ── Language selection ──────────────────────────────────────────────────────
+
+def _language_keyboard(current_lang: str) -> InlineKeyboardMarkup:
+    """Inline keyboard with one button per supported language."""
+    buttons = []
+    for code, label in LANGUAGE_LABELS.items():
+        tick = " ✓" if code == current_lang else ""
+        buttons.append([InlineKeyboardButton(
+            text=f"{label}{tick}",
+            callback_data=f"setlang:{code}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="⬅️ Back / Geri / Назад",
+        callback_data="menu:back",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.message(Command("language"))
+async def cmd_language(message: Message) -> None:
+    user = message.from_user
+    row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
+    current_label = LANGUAGE_LABELS.get(lang, lang)
+    await message.answer(
+        t("lang_select_title", lang, current=current_label),
+        reply_markup=_language_keyboard(lang),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("setlang:"))
+async def cb_set_language(callback: CallbackQuery) -> None:
+    user = callback.from_user
+    chosen = callback.data.split(":", 1)[1]
+
+    if chosen not in SUPPORTED_LANGS:
+        await callback.answer("❌ Unknown language", show_alert=True)
+        return
+
+    row = await _get_user(user.id, user.username, user.first_name)
+    current = _lang_from_row(user, row)
+
+    if chosen == current:
+        await callback.answer(
+            t("lang_already", chosen, lang=LANGUAGE_LABELS[chosen]),
+            show_alert=True,
+        )
+        return
+
+    await asyncio.to_thread(db.set_preferred_lang, user.id, chosen)
+    new_label = LANGUAGE_LABELS[chosen]
+
+    await callback.message.edit_text(
+        t("lang_changed", chosen, lang=new_label),
+        reply_markup=_language_keyboard(chosen),
+        parse_mode="HTML",
+    )
+    await callback.answer(f"✅ {new_label}")
 
 
 @router.message(Command("feedback"))

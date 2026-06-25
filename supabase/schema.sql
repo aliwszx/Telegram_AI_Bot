@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     username          TEXT,
     first_name        TEXT,
     language_code     TEXT,
+    preferred_lang    TEXT,                       -- user-chosen UI language (az/en/ru)
 
     plan              TEXT    NOT NULL DEFAULT 'free'
                       CHECK (plan IN ('free', 'premium')),
@@ -201,3 +202,7 @@ SELECT
 FROM payments
 GROUP BY month
 ORDER BY month DESC;
+
+
+-- ── Migration: add preferred_lang column (run once if upgrading) ──────────
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_lang TEXT;

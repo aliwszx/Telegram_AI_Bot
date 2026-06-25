@@ -92,6 +92,19 @@ def update_user_language(user_id: int, language_code: str | None) -> None:
 
 
 @with_retry()
+def set_preferred_lang(user_id: int, lang: str) -> None:
+    """Save the user's manually chosen UI language (az/en/ru)."""
+    _client.table("users").update(
+        {"preferred_lang": lang}
+    ).eq("id", user_id).execute()
+
+
+def get_preferred_lang(user: dict) -> str | None:
+    """Return the user's saved preferred language, or None if not set."""
+    return user.get("preferred_lang") or None
+
+
+@with_retry()
 def add_bonus_messages(user_id: int, amount: int) -> None:
     user = get_user(user_id)
     if user is None:
