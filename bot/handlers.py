@@ -710,6 +710,7 @@ async def cb_set_language(callback: CallbackQuery) -> None:
         return
 
     await asyncio.to_thread(db.set_preferred_lang, user.id, chosen)
+    await _cache.invalidate_user(user.id)  # flush stale row so new lang takes effect immediately
     new_label = LANGUAGE_LABELS[chosen]
 
     await callback.message.edit_text(
