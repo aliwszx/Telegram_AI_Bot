@@ -58,6 +58,10 @@ _broadcast_pending: dict[int, dict] = {}   # {admin_id: {"variants": [...], "mod
 _broadcast_active:  dict[int, asyncio.Task] = {}  # running tasks
 _broadcast_stats:   dict[int, dict] = {}   # live progress
 
+# ── Onboarding state ───────────────────────────────────────────────────────
+# Tracks which onboarding step a new user is on: 1 | 2 | 3
+_onboarding: dict[int, int] = {}   # {user_id: step}
+
 # Per-user lock: prevent the same user from sending multiple concurrent requests
 _user_locks: dict[int, asyncio.Lock] = {}
 _user_locks_meta: dict[int, float] = {}
@@ -159,6 +163,36 @@ def _upgrade_keyboard(lang=None) -> InlineKeyboardMarkup:
 
 # ── Commands ───────────────────────────────────────────────────────────────
 
+# ── Onboarding keyboards ───────────────────────────────────────────────────
+
+def _onboard_step1_kb(lang=None) -> InlineKeyboardMarkup:
+    """Step 1 — what do you want to do?"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Söhbət / Kömək",   callback_data="ob:goal:chat")],
+        [InlineKeyboardButton(text="✍️ Yazı / Redaktə",   callback_data="ob:goal:write")],
+        [InlineKeyboardButton(text="💻 Kod / Texniki",     callback_data="ob:goal:code")],
+        [InlineKeyboardButton(text="🌍 Tərcümə",           callback_data="ob:goal:translate")],
+    ])
+
+
+def _onboard_step2_kb(lang=None) -> InlineKeyboardMarkup:
+    """Step 2 — pick a mode (filtered to 4 most relevant)."""
+    items = list(MODE_NAMES.items())[:4]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{v}", callback_data=f"ob:mode:{k}")]
+        for k, v in items
+    ] + [[InlineKeyboardButton(text="Hamısını gör →", callback_data="ob:mode:_all")]])
+
+
+# goal → suggested mode mapping
+_GOAL_MODE: dict[str, str] = {
+    "chat":      "default",
+    "write":     "writer",
+    "code":      "coder",
+    "translate": "translator",
+}
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
     user = message.from_user
@@ -180,19 +214,113 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
 
     name = user.first_name or user.username or t("guest_name", lang)
 
-    extra = ""
-    if referred_by and row.get("referred_by") == referred_by:
-        extra = t("welcome_referral_bonus", lang)
+    # ── Returning user — show normal menu ──────────────────────────────────
+    msg_count = await asyncio.to_thread(
+        lambda: _client_msg_count(user.id)
+    )
+    is_new = msg_count == 0 and row.get("daily_usage", 0) == 0
 
-    days_left = db.days_until_premium_expires(row)
-    if days_left is not None and days_left <= settings.premium_expiry_warning_days:
-        extra += t("welcome_premium_expiry", lang, days_left=days_left)
+    if not is_new:
+        extra = ""
+        if referred_by and row.get("referred_by") == referred_by:
+            extra = t("welcome_referral_bonus", lang)
+        days_left = db.days_until_premium_expires(row)
+        if days_left is not None and days_left <= settings.premium_expiry_warning_days:
+            extra += t("welcome_premium_expiry", lang, days_left=days_left)
+        await message.answer(
+            t("welcome", lang, name=name) + extra,
+            reply_markup=_start_keyboard(lang),
+            parse_mode="HTML",
+        )
+        return
 
+    # ── New user — start 3-step onboarding ────────────────────────────────
+    _onboarding[user.id] = 1
     await message.answer(
-        t("welcome", lang, name=name) + extra,
-        reply_markup=_start_keyboard(lang),
+        f"Salam, <b>{name}</b>! 👋\n\n"
+        "Mən AI köməkçinizəm. Başlamaq üçün — <b>nə etmək istərdiniz?</b>",
+        reply_markup=_onboard_step1_kb(lang),
         parse_mode="HTML",
     )
+
+
+def _client_msg_count(user_id: int) -> int:
+    """Quick count of user messages — used only for new-user detection."""
+    try:
+        r = db._client.table("messages").select("id", count="exact").eq("user_id", user_id).execute()
+        return r.count or 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+@router.callback_query(F.data.startswith("ob:"))
+async def cb_onboarding(callback: CallbackQuery) -> None:
+    """Handles all 3 onboarding steps."""
+    user = callback.from_user
+    lang = _lang(user)
+    _, action, value = callback.data.split(":", 2)
+
+    # ── Step 1 result → Step 2 ────────────────────────────────────────────
+    if action == "goal":
+        suggested_mode = _GOAL_MODE.get(value, "default")
+        # Pre-select the suggested mode silently
+        await asyncio.to_thread(db.set_chat_mode, user.id, suggested_mode)
+        _onboarding[user.id] = 2
+
+        goal_labels = {
+            "chat":      "💬 Söhbət / Kömək",
+            "write":     "✍️ Yazı / Redaktə",
+            "code":      "💻 Kod / Texniki",
+            "translate": "🌍 Tərcümə",
+        }
+        await callback.message.edit_text(
+            f"✅ <b>{goal_labels.get(value, value)}</b> seçildi.\n\n"
+            f"<b>Addım 2/3</b> — AI rejiminizi seçin:\n"
+            f"<i>(Tövsiyə olunan: <b>{MODE_NAMES.get(suggested_mode, suggested_mode)}</b>)</i>",
+            reply_markup=_onboard_step2_kb(lang),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
+    # ── Step 2 result → Step 3 ────────────────────────────────────────────
+    elif action == "mode":
+        if value == "_all":
+            # Show full mode picker, return to onboarding after
+            row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+            current = db.get_chat_mode(row)
+            await callback.message.edit_text(
+                "Rejim seçin:",
+                reply_markup=_mode_keyboard(current, lang),
+                parse_mode="HTML",
+            )
+            await callback.answer()
+            return
+
+        await asyncio.to_thread(db.set_chat_mode, user.id, value)
+        _onboarding[user.id] = 3
+
+        await callback.message.edit_text(
+            f"✅ <b>{MODE_NAMES.get(value, value)}</b> rejimi aktivdir.\n\n"
+            "🎉 <b>Addım 3/3</b> — Hər şey hazırdır!\n\n"
+            "İlk sualınızı yazın — cavablayıram! 👇\n\n"
+            "<i>İstənilən vaxt /help ilə bütün əmrləri görə bilərsiniz.</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Menyu aç", callback_data="ob:finish:ok")],
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer(f"✅ {MODE_NAMES.get(value, value)} aktiv!")
+
+    # ── Finish — show main menu ────────────────────────────────────────────
+    elif action == "finish":
+        _onboarding.pop(user.id, None)
+        name = user.first_name or user.username or t("guest_name", lang)
+        await callback.message.edit_text(
+            t("welcome", lang, name=name),
+            reply_markup=_start_keyboard(lang),
+            parse_mode="HTML",
+        )
+        await callback.answer()
 
 
 @router.message(Command("help"))
@@ -1042,6 +1170,25 @@ _EDIT_MIN_INTERVAL = 0.9
 _EDIT_MIN_CHARS = 25
 
 
+async def _keep_typing(chat_id: int, bot, stop_event: asyncio.Event) -> None:
+    """
+    Sends 'typing' action every 4 s until stop_event is set.
+    Telegram clears the indicator after ~5 s, so we refresh before that.
+    """
+    try:
+        while not stop_event.is_set():
+            try:
+                await bot.send_chat_action(chat_id, "typing")
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.wait_for(
+                asyncio.shield(stop_event.wait()),
+                timeout=4,
+            )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass
+
+
 async def _stream_ai_reply(
     message: Message,
     history: list[dict],
@@ -1174,14 +1321,31 @@ async def _handle_ai_message(
 
         if not ctx["allowed"]:
             limit = ctx["limit"]
+            # Calculate real countdown until midnight reset
+            now_utc   = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+            midnight  = (now_utc + __import__("datetime").timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            secs_left = int((midnight - now_utc).total_seconds())
+            hrs, rem  = divmod(secs_left, 3600)
+            mins      = rem // 60
+            if hrs > 0:
+                countdown = f"{hrs}s {mins}d"   # az: saat/dəqiqə
+            else:
+                countdown = f"{mins}d"
             await message.answer(
-                t("limit_exceeded", lang, limit=limit),
+                t("limit_exceeded", lang, limit=limit) +
+                f"\n\n⏳ <b>{countdown}</b> sonra yenilənir.",
                 parse_mode="HTML",
                 reply_markup=_upgrade_keyboard(lang),
             )
             return
 
-        await message.bot.send_chat_action(message.chat.id, "typing")
+        # Start persistent typing indicator (refreshes every 4 s)
+        _typing_stop = asyncio.Event()
+        _typing_task = asyncio.create_task(
+            _keep_typing(message.chat.id, message.bot, _typing_stop)
+        )
 
         raw_history = ctx["history"]
         mode        = ctx.get("chat_mode") or "default"
@@ -1224,6 +1388,9 @@ async def _handle_ai_message(
             }
             await message.answer(t("ai_error", lang), reply_markup=_retry_keyboard(lang))
             return
+        finally:
+            _typing_stop.set()
+            _typing_task.cancel()
 
         history_label = user_text if user_text else "[media]"
 
