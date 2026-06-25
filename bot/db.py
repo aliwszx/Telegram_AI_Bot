@@ -109,7 +109,8 @@ def get_daily_limit(plan: Plan, bonus: int = 0) -> int:
 
 def get_web_search_enabled(user: dict) -> bool:
     return user.get("web_search", False)
-
+    
+@with_retry()
 def save_feedback(self, user_id: int, text: str) -> None:
     self._client.table("feedback").insert({
         "user_id": user_id,
