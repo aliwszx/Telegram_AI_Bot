@@ -29,7 +29,7 @@ Schema additions needed (run once in Supabase SQL editor):
     create table if not exists message_embeddings (
         id          bigserial primary key,
         user_id     bigint    not null references users(id) on delete cascade,
-        message_id  bigint    references messages(id) on delete cascade,
+        message_id  uuid      references messages(id) on delete cascade,
         role        text      not null,
         content     text      not null,
         embedding   vector(768),
@@ -236,7 +236,7 @@ def semantic_search(user_id: int, query: str, top_k: int = SEMANTIC_TOP_K) -> li
         return []
 
 
-def store_embedding_async(user_id: int, message_id: int | None, role: str, content: str) -> None:
+def store_embedding_async(user_id: int, message_id: str | None, role: str, content: str) -> None:
     """Fire-and-forget: embed a message and store in message_embeddings table."""
     threading.Thread(
         target=_store_embedding,
@@ -245,7 +245,7 @@ def store_embedding_async(user_id: int, message_id: int | None, role: str, conte
     ).start()
 
 
-def _store_embedding(user_id: int, message_id: int | None, role: str, content: str) -> None:
+def _store_embedding(user_id: int, message_id: str | None, role: str, content: str) -> None:
     vec = _embed(content)
     if vec is None:
         return
