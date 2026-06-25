@@ -32,6 +32,7 @@ from aiogram.types import (
 )
 
 from bot import db
+from bot import cache as _cache
 from bot.memory import build_enriched_history, store_embedding_async
 from bot.ai import (
     generate_reply, generate_reply_stream, generate_quick_reply,
@@ -48,6 +49,23 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 router = Router(name="main")
+
+
+# ── Cached user fetch ───────────────────────────────────────────────────────
+
+async def _get_user(user_id: int, username=None, first_name=None) -> dict:
+    """
+    Return user row — Redis cache first (30 s TTL), then DB.
+    Also calls get_or_create_user so new users are always registered.
+    """
+    cached = await _cache.get_user(user_id)
+    if cached:
+        return cached
+    row = await asyncio.to_thread(
+        db.get_or_create_user, user_id, username, first_name
+    )
+    await _cache.set_user(user_id, row)
+    return row
 
 # In-memory cache of last failed request per user (for retry button)
 _last_failed: dict[int, dict] = {}
@@ -207,9 +225,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         except ValueError:
             pass
 
-    row = await asyncio.to_thread(
-        db.get_or_create_user, user.id, user.username, user.first_name, referred_by
-    )
+    row = await _get_user(user.id, user.username, user.first_name)
     await asyncio.to_thread(db.update_user_language, user.id, user.language_code)
 
     name = user.first_name or user.username or t("guest_name", lang)
@@ -286,7 +302,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
     elif action == "mode":
         if value == "_all":
             # Show full mode picker, return to onboarding after
-            row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+            row = await _get_user(user.id, user.username, user.first_name)
             current = db.get_chat_mode(row)
             await callback.message.edit_text(
                 "Rejim seçin:",
@@ -333,7 +349,7 @@ async def cmd_help(message: Message) -> None:
 async def cmd_status(message: Message) -> None:
     user = message.from_user
     lang = _lang(user)
-    row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+    row = await _get_user(user.id, user.username, user.first_name)
     plan = await asyncio.to_thread(db.effective_plan, row)
     limit = db.get_daily_limit(plan, row.get("bonus_messages", 0) or 0)
     usage = row.get("daily_usage", 0)
@@ -371,7 +387,7 @@ async def cmd_status(message: Message) -> None:
 async def cmd_mode(message: Message) -> None:
     user = message.from_user
     lang = _lang(user)
-    row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+    row = await _get_user(user.id, user.username, user.first_name)
     current = db.get_chat_mode(row)
     mode_list = "\n".join(
         t("mode_row", lang, check="✅" if k == current else "▫️", name=v, desc=MODE_DESCRIPTIONS[k])
@@ -419,7 +435,7 @@ async def cb_menu(callback: CallbackQuery) -> None:
         await callback.answer()
 
     elif action == "mode":
-        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        row = await _get_user(user.id, user.username, user.first_name)
         current = db.get_chat_mode(row)
         await callback.message.edit_text(
             t("mode_select_header", lang),
@@ -429,7 +445,7 @@ async def cb_menu(callback: CallbackQuery) -> None:
         await callback.answer()
 
     elif action == "status":
-        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        row = await _get_user(user.id, user.username, user.first_name)
         plan = await asyncio.to_thread(db.effective_plan, row)
         limit = db.get_daily_limit(plan, row.get("bonus_messages", 0) or 0)
         usage = row.get("daily_usage", 0)
@@ -455,7 +471,7 @@ async def cb_menu(callback: CallbackQuery) -> None:
         await callback.answer()
 
     elif action == "search_toggle":
-        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        row = await _get_user(user.id, user.username, user.first_name)
         current = db.get_web_search_enabled(row)
         new_state = not current
         await asyncio.to_thread(db.set_web_search, user.id, new_state)
@@ -497,7 +513,7 @@ async def cb_menu(callback: CallbackQuery) -> None:
         await callback.answer()
 
     elif action == "upgrade":
-        row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+        row = await _get_user(user.id, user.username, user.first_name)
         plan = await asyncio.to_thread(db.effective_plan, row)
         if plan == "premium":
             await callback.answer(t("upgrade_already_toast", lang), show_alert=True)
@@ -535,7 +551,7 @@ async def cmd_invite(message: Message) -> None:
 
 
 async def _send_invite(target: Message, user_id: int, username, first_name, lang=None) -> None:
-    row = await asyncio.to_thread(db.get_or_create_user, user_id, username, first_name)
+    row = await _get_user(user_id, username, first_name)
     bot_user = await target.bot.get_me()
     link = f"https://t.me/{bot_user.username}?start=ref_{user_id}"
     count = row.get("referral_count", 0)
@@ -601,7 +617,7 @@ async def _send_top(target: Message, lang=None) -> None:
 async def cmd_search(message: Message) -> None:
     user = message.from_user
     lang = _lang(user)
-    row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+    row = await _get_user(user.id, user.username, user.first_name)
     new_state = not db.get_web_search_enabled(row)
     await asyncio.to_thread(db.set_web_search, user.id, new_state)
     status = t("search_on", lang) if new_state else t("search_off", lang)
@@ -639,7 +655,7 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
 async def cmd_upgrade(message: Message) -> None:
     user = message.from_user
     lang = _lang(user)
-    row = await asyncio.to_thread(db.get_or_create_user, user.id, user.username, user.first_name)
+    row = await _get_user(user.id, user.username, user.first_name)
     plan = await asyncio.to_thread(db.effective_plan, row)
     if plan == "premium":
         until = row.get("premium_until", "")
@@ -1313,6 +1329,8 @@ async def _handle_ai_message(
 
         try:
             ctx = await asyncio.to_thread(db.check_usage_and_get_history, user.id)
+            # Cache slim ctx (without history bytes) for 10 s
+            await _cache.set_ctx(user.id, ctx)
         except Exception as exc:
             logger.exception("DB error for user %s: %s", user.id, exc)
             _capture(exc)
@@ -1403,8 +1421,7 @@ async def _handle_ai_message(
             store_embedding_async(user.id, None, "user", history_label)
         store_embedding_async(user.id, None, "assistant", reply_text)
 
-        from bot import cache as redis_cache
-        await redis_cache.invalidate_user(user.id)
+        await _cache.invalidate_user(user.id)
 
         if remaining <= 3:
             await message.answer(
