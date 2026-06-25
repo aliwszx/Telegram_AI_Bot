@@ -851,11 +851,35 @@ _BROADCAST_CHUNK  = 25          # send this many, then sleep
 _PROGRESS_EVERY   = 50          # edit status every N sends
 
 
+# ── Broadcast spam / safety filter ─────────────────────────────────────────
+# Patterns that are unconditionally blocked in broadcasts.
+# Extend as needed.
+import re as _re
+
+_BC_BLOCKED_PATTERNS = [
+    _re.compile(r"https?://", _re.I),          # raw URLs (use /t.me only)
+    _re.compile(r"<script", _re.I),            # XSS attempt in HTML
+    _re.compile(r"viagra|casino|crypto", _re.I),  # spam keywords
+]
+
+_BC_MAX_LENGTH = 3000   # characters
+
+
+def _bc_spam_check(text: str) -> str | None:
+    """Return error string if text fails spam check, else None."""
+    if len(text) > _BC_MAX_LENGTH:
+        return f"❌ Mesaj çox uzundur ({len(text)} > {_BC_MAX_LENGTH} simvol)."
+    for pat in _BC_BLOCKED_PATTERNS:
+        if pat.search(text):
+            return f"❌ Mesajda qadağan olunmuş məzmun var: <code>{pat.pattern}</code>"
+    return None
+
+
 def _broadcast_preview_kb(admin_id: int, lang=None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Send", callback_data=f"bc:confirm:{admin_id}"),
-            InlineKeyboardButton(text="❌ Cancel", callback_data=f"bc:cancel:{admin_id}"),
+            InlineKeyboardButton(text="✅ Göndər", callback_data=f"bc:confirm:{admin_id}"),
+            InlineKeyboardButton(text="❌ Ləğv et", callback_data=f"bc:cancel:{admin_id}"),
         ],
     ])
 
@@ -965,14 +989,22 @@ async def cmd_broadcast(message: Message, command: CommandObject) -> None:
     else:
         variants = [raw]
 
+    # ── Spam / safety check ────────────────────────────────────────────────
+    for v in variants:
+        err = _bc_spam_check(v)
+        if err:
+            await message.answer(err, parse_mode="HTML")
+            return
+
     _broadcast_pending[admin] = {"variants": variants}
 
     user_ids = await asyncio.to_thread(db.get_all_user_ids)
-    ab_label = " (A/B test — 2 variants)" if len(variants) == 2 else ""
-    preview_lines = [f"📢 <b>Broadcast preview{ab_label}</b>  —  {len(user_ids)} users\n"]
+    ab_label = " (A/B test — 2 variant)" if len(variants) == 2 else ""
+    preview_lines = [f"📢 <b>Broadcast preview{ab_label}</b>  —  {len(user_ids)} istifadəçi\n"]
     for idx, v in enumerate(variants):
-        label = f"Variant {'AB'[idx]}" if len(variants) == 2 else "Message"
+        label = f"Variant {'AB'[idx]}" if len(variants) == 2 else "Mesaj"
         preview_lines.append(f"<b>{label}:</b>\n{v}")
+    preview_lines.append("\n⚠️ <i>Göndərmədən əvvəl yoxlayın. Bu əməliyyat geri alına bilməz.</i>")
 
     await message.answer(
         "\n\n".join(preview_lines),
@@ -1101,21 +1133,62 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
     await message.answer(t("admin_grant_done", lang, uid=target_id, plan=plan))
 
 
+# ── Admin action callbacks — hardened against spoofed callback_data ─────────
+#
+# Security model:
+#   1. Caller MUST be an admin (checked first, cheap).
+#   2. Target uid is parsed from callback_data, then RE-VERIFIED against the
+#      DB — we confirm the user actually exists before touching them.
+#      This blocks a spoofed "agrant:99999999:premium" from creating rows.
+#   3. plan / action values are validated against an allowlist.
+
+_VALID_PLANS = {"premium", "free"}
+
+
+async def _resolve_target_uid(uid_str: str) -> int | None:
+    """Parse uid and confirm it exists in the DB. Returns None on any failure."""
+    try:
+        uid = int(uid_str)
+    except (ValueError, TypeError):
+        return None
+    user = await asyncio.to_thread(db.get_user, uid)
+    return uid if user is not None else None
+
+
 @router.callback_query(F.data.startswith("agrant:"))
 async def cb_admin_grant(callback: CallbackQuery) -> None:
     lang = _lang(callback.from_user)
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
-    _, uid_str, plan = callback.data.split(":")
-    uid = int(uid_str)
+
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Invalid action.", show_alert=True)
+        return
+    _, uid_str, plan = parts
+
+    # Validate plan value against allowlist
+    if plan not in _VALID_PLANS:
+        await callback.answer("Invalid plan.", show_alert=True)
+        return
+
+    # Verify target user exists in DB (blocks spoofed uid)
+    uid = await _resolve_target_uid(uid_str)
+    if uid is None:
+        await callback.answer("User not found.", show_alert=True)
+        return
+
     if plan == "premium":
         await asyncio.to_thread(db.activate_premium, uid, settings.premium_duration_days)
         label = t("admin_grant_premium_done", lang, days=settings.premium_duration_days)
     else:
         await asyncio.to_thread(db.set_plan, uid, "free")
         label = t("admin_grant_free_done", lang)
+
+    await _cache.invalidate_user(uid)
     await callback.answer(label, show_alert=True)
+    logger.info("Admin %s granted plan=%s to uid=%s", callback.from_user.id, plan, uid)
 
 
 @router.callback_query(F.data.startswith("aclear:"))
@@ -1124,9 +1197,16 @@ async def cb_admin_clear(callback: CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
-    uid = int(callback.data.split(":")[1])
+
+    uid = await _resolve_target_uid(callback.data.split(":")[1])
+    if uid is None:
+        await callback.answer("User not found.", show_alert=True)
+        return
+
     count = await asyncio.to_thread(db.clear_history, uid)
+    await _cache.invalidate_user(uid)
     await callback.answer(t("admin_clear_done", lang, count=count), show_alert=True)
+    logger.info("Admin %s cleared history for uid=%s (%d msgs)", callback.from_user.id, uid, count)
 
 
 @router.callback_query(F.data.startswith("abonus:"))
@@ -1135,9 +1215,16 @@ async def cb_admin_bonus(callback: CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
-    uid = int(callback.data.split(":")[1])
+
+    uid = await _resolve_target_uid(callback.data.split(":")[1])
+    if uid is None:
+        await callback.answer("User not found.", show_alert=True)
+        return
+
     await asyncio.to_thread(db.add_bonus_messages, uid, 10)
+    await _cache.invalidate_user(uid)
     await callback.answer(t("admin_bonus_done", lang), show_alert=True)
+    logger.info("Admin %s added bonus to uid=%s", callback.from_user.id, uid)
 
 
 # ── Inline mode ────────────────────────────────────────────────────────────
