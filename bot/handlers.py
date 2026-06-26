@@ -762,11 +762,10 @@ async def cb_set_language(callback: CallbackQuery) -> None:
     await _cache.invalidate_user(user.id)
     new_label = LANGUAGE_LABELS[chosen]
 
-    # Immediately show main menu in the new language — no extra tap needed
-    name = user.first_name or user.username or t("guest_name", chosen)
+    # Refresh the language menu itself in the new language
     await callback.message.edit_text(
-        t("lang_changed", chosen, lang=new_label) + "\n\n" + t("welcome", chosen, name=name),
-        reply_markup=_start_keyboard(chosen),
+        t("lang_select_title", chosen, current=new_label),
+        reply_markup=_language_keyboard(chosen),
         parse_mode="HTML",
     )
     await callback.answer(f"✅ {new_label}")
