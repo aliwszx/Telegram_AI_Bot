@@ -44,5 +44,11 @@ class FloodControlMiddleware(BaseMiddleware):
                 if now - last < self.min_interval:
                     return
                 self._last_seen[user.id] = now
+                # Evict entries older than 60 s when dict grows large
+                if len(self._last_seen) > 5000:
+                    cutoff = now - 60
+                    stale = [uid for uid, ts in self._last_seen.items() if ts < cutoff]
+                    for uid in stale:
+                        del self._last_seen[uid]
 
         return await handler(event, data)
