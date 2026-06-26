@@ -345,7 +345,8 @@ def _client_msg_count(user_id: int) -> int:
 async def cb_onboarding(callback: CallbackQuery) -> None:
     """Handles all 3 onboarding steps."""
     user = callback.from_user
-    lang = _lang(user)
+    _ob_row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _ob_row)
     _, action, value = callback.data.split(":", 2)
 
     # ── Step 1 result → Step 2 ────────────────────────────────────────────
@@ -460,8 +461,8 @@ async def cmd_status(message: Message) -> None:
 @router.message(Command("mode"))
 async def cmd_mode(message: Message) -> None:
     user = message.from_user
-    lang = _lang(user)
     row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     current = db.get_chat_mode(row)
     mode_list = "\n".join(
         t("mode_row", lang, check="✅" if k == current else "▫️", name=mode_name(k, lang), desc=mode_desc(k, lang))
@@ -477,7 +478,9 @@ async def cmd_mode(message: Message) -> None:
 
 @router.callback_query(F.data.startswith("mode:"))
 async def cb_mode_select(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    user = callback.from_user
+    _ms_row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _ms_row)
     mode = callback.data.split(":", 1)[1]
     if mode not in MODE_NAMES:
         await callback.answer(t("mode_invalid", lang), show_alert=True)
@@ -623,7 +626,9 @@ async def cb_menu(callback: CallbackQuery) -> None:
 
 @router.message(Command("clear"))
 async def cmd_clear(message: Message) -> None:
-    lang = _lang(message.from_user)
+    user = message.from_user
+    _cl_row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _cl_row)
     count = await asyncio.to_thread(db.clear_history, message.from_user.id)
     await message.answer(t("clear_cmd_done", lang, count=count))
 
@@ -631,7 +636,8 @@ async def cmd_clear(message: Message) -> None:
 @router.message(Command("invite"))
 async def cmd_invite(message: Message) -> None:
     user = message.from_user
-    await _send_invite(message, user.id, user.username, user.first_name, _lang(user))
+    _inv_row = await _get_user(user.id, user.username, user.first_name)
+    await _send_invite(message, user.id, user.username, user.first_name, _lang_from_row(user, _inv_row))
 
 
 async def _send_invite(target: Message, user_id: int, username, first_name, lang=None) -> None:
@@ -653,7 +659,9 @@ async def _send_invite(target: Message, user_id: int, username, first_name, lang
 
 @router.message(Command("export"))
 async def cmd_export(message: Message) -> None:
-    await _send_export(message, message.from_user.id, _lang(message.from_user))
+    _exp_user = message.from_user
+    _exp_row = await _get_user(_exp_user.id, _exp_user.username, _exp_user.first_name)
+    await _send_export(message, _exp_user.id, _lang_from_row(_exp_user, _exp_row))
 
 
 async def _send_export(target: Message, user_id: int, lang=None) -> None:
@@ -678,7 +686,9 @@ async def _send_export(target: Message, user_id: int, lang=None) -> None:
 
 @router.message(Command("top"))
 async def cmd_top(message: Message) -> None:
-    await _send_top(message, _lang(message.from_user))
+    _top_user = message.from_user
+    _top_row = await _get_user(_top_user.id, _top_user.username, _top_user.first_name)
+    await _send_top(message, _lang_from_row(_top_user, _top_row))
 
 
 async def _send_top(target: Message, lang=None) -> None:
@@ -700,8 +710,8 @@ async def _send_top(target: Message, lang=None) -> None:
 @router.message(Command("search"))
 async def cmd_search(message: Message) -> None:
     user = message.from_user
-    lang = _lang(user)
     row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     new_state = not db.get_web_search_enabled(row)
     await asyncio.to_thread(db.set_web_search, user.id, new_state)
     status = t("search_on", lang) if new_state else t("search_off", lang)
@@ -774,7 +784,8 @@ async def cb_set_language(callback: CallbackQuery) -> None:
 @router.message(Command("feedback"))
 async def cmd_feedback(message: Message, command: CommandObject) -> None:
     user = message.from_user
-    lang = _lang(user)
+    _fb_row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _fb_row)
     if not command.args:
         await message.answer(t("feedback_usage", lang), parse_mode="HTML")
         return
@@ -805,8 +816,8 @@ async def cmd_feedback(message: Message, command: CommandObject) -> None:
 @router.message(Command("upgrade"))
 async def cmd_upgrade(message: Message) -> None:
     user = message.from_user
-    lang = _lang(user)
     row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, row)
     plan = await asyncio.to_thread(db.effective_plan, row)
     if plan == "premium":
         until = row.get("premium_until", "")
@@ -840,7 +851,8 @@ async def handle_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
 
 @router.message(F.successful_payment)
 async def handle_successful_payment(message: Message) -> None:
-    lang = _lang(message.from_user)
+    _pay_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _pay_row)
     until = await asyncio.to_thread(
         db.activate_premium, message.from_user.id, settings.premium_duration_days
     )
@@ -874,13 +886,15 @@ def _admin_keyboard(lang=None) -> InlineKeyboardMarkup:
 async def cmd_admin(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         return
-    lang = _lang(message.from_user)
+    _adm_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _adm_row)
     await message.answer(t("admin_panel", lang), reply_markup=_admin_keyboard(lang), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("admin:"))
 async def cb_admin(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    _adm_row2 = await _get_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    lang = _lang_from_row(callback.from_user, _adm_row2)
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
@@ -1125,7 +1139,8 @@ async def _aiter_user_ids():
 async def cmd_broadcast(message: Message, command: CommandObject) -> None:
     if not _is_admin(message.from_user.id):
         return
-    lang  = _lang(message.from_user)
+    _bc_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _bc_row)
     admin = message.from_user.id
 
     if not command.args:
@@ -1229,7 +1244,8 @@ async def cb_broadcast(callback: CallbackQuery) -> None:
 async def cmd_lookup(message: Message, command: CommandObject) -> None:
     if not _is_admin(message.from_user.id):
         return
-    lang = _lang(message.from_user)
+    _lu_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _lu_row)
     if not command.args:
         await message.answer(t("admin_lookup_usage", lang))
         return
@@ -1282,7 +1298,8 @@ async def cmd_lookup(message: Message, command: CommandObject) -> None:
 async def cmd_grant(message: Message, command: CommandObject) -> None:
     if not _is_admin(message.from_user.id):
         return
-    lang = _lang(message.from_user)
+    _gr_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _gr_row)
     if not command.args:
         await message.answer(t("admin_grant_usage", lang))
         return
@@ -1319,7 +1336,8 @@ async def _resolve_target_uid(uid_str: str) -> int | None:
 
 @router.callback_query(F.data.startswith("agrant:"))
 async def cb_admin_grant(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    _ag_row = await _get_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    lang = _lang_from_row(callback.from_user, _ag_row)
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
@@ -1355,7 +1373,8 @@ async def cb_admin_grant(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("aclear:"))
 async def cb_admin_clear(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    _aclr_row = await _get_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    lang = _lang_from_row(callback.from_user, _aclr_row)
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
@@ -1373,7 +1392,8 @@ async def cb_admin_clear(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("abonus:"))
 async def cb_admin_bonus(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    _ab_row = await _get_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    lang = _lang_from_row(callback.from_user, _ab_row)
     if not _is_admin(callback.from_user.id):
         await callback.answer(t("admin_no_perm", lang), show_alert=True)
         return
@@ -1542,7 +1562,8 @@ async def _stream_ai_reply(
 
 @router.callback_query(F.data == "retry_last")
 async def cb_retry_last(callback: CallbackQuery) -> None:
-    lang = _lang(callback.from_user)
+    _rl_row = await _get_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    lang = _lang_from_row(callback.from_user, _rl_row)
     pending = _pop_last_failed(callback.from_user.id)
     if not pending:
         await callback.answer(t("retry_expired", lang), show_alert=True)
@@ -1571,7 +1592,8 @@ async def _handle_ai_message(
     target_user=None,
 ) -> None:
     user = target_user or message.from_user
-    lang = _lang(user)
+    _ai_row = await _get_user(user.id, user.username, user.first_name)
+    lang = _lang_from_row(user, _ai_row)
 
     lock = await _get_user_lock(user.id)
     if lock.locked():
@@ -1697,7 +1719,8 @@ async def handle_ai_chat(message: Message) -> None:
 
 @router.message(F.photo)
 async def handle_photo(message: Message) -> None:
-    lang = _lang(message.from_user)
+    _ph_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _ph_row)
     photo = message.photo[-1]
     caption = (message.caption or "").strip()
     prompt = caption if caption else t("photo_default_prompt", lang)
@@ -1727,7 +1750,8 @@ MAX_DOC_SIZE_MB = 10
 
 @router.message(F.document)
 async def handle_document(message: Message) -> None:
-    lang = _lang(message.from_user)
+    _doc_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _doc_row)
     doc = message.document
     mime = doc.mime_type or ""
     caption = (message.caption or "").strip()
@@ -1766,7 +1790,8 @@ _GEMINI_AUDIO_MIMES = {
 
 @router.message(F.voice | F.audio)
 async def handle_voice(message: Message) -> None:
-    lang = _lang(message.from_user)
+    _vo_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _vo_row)
     media = message.voice or message.audio
 
     # Telegram voice notes are always audio/ogg (opus).
@@ -1793,7 +1818,8 @@ async def handle_voice(message: Message) -> None:
 
 @router.message(F.sticker)
 async def handle_sticker(message: Message) -> None:
-    lang = _lang(message.from_user)
+    _st_row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = _lang_from_row(message.from_user, _st_row)
     emoji = message.sticker.emoji or "😊"
     prompt = t("sticker_prompt", lang, emoji=emoji)
     await _handle_ai_message(message, prompt)
