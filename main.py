@@ -10,7 +10,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from bot.config import settings
+from bot.middlewares import FloodControlMiddleware
+
 from bot.handlers import router
 from bot.scheduler import run_scheduler
 from bot.sentry import init_sentry
@@ -38,6 +39,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
+    dp.message.middleware(FloodControlMiddleware())
     dp.include_router(router)
     dp.startup.register(on_startup)
 
