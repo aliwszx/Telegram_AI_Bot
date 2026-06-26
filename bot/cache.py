@@ -18,12 +18,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _redis = None
+_REDIS_URL = ""
 
 try:
     import redis.asyncio as aioredis
     _REDIS_URL = os.getenv("REDIS_URL", "")
     if _REDIS_URL:
-        _redis = aioredis.from_url(_REDIS_URL, decode_responses=True)
+        _redis = aioredis.from_url(
+            _REDIS_URL,
+            decode_responses=True,
+            # Auto-reconnect on connection drops
+            socket_connect_timeout=5,
+            retry_on_timeout=True,
+        )
         logger.info("Redis cache connected: %s", _REDIS_URL[:30])
     else:
         logger.info("REDIS_URL not set — cache disabled.")

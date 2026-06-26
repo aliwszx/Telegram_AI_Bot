@@ -60,6 +60,10 @@ async def run_scheduler(bot) -> None:
     """Main scheduler loop. Runs every hour."""
     logger.info("Scheduler started.")
     tick = 0
+
+    # Run once immediately on startup so we don't wait a full hour for first stats
+    await log_daily_stats()
+
     while True:
         await asyncio.sleep(3600)
         tick += 1

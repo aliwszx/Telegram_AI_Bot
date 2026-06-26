@@ -447,12 +447,9 @@ def generate_reply(
 ):
 
 
-    models=[
-
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-
+    models = [settings.gemini_model] + [
+        m for m in settings.gemini_fallback_models
+        if m != settings.gemini_model
     ]
 
 
@@ -556,10 +553,9 @@ def generate_reply_stream(
     web_search=False,
 ):
 
-    models=[
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
+    models = [settings.gemini_model] + [
+        m for m in settings.gemini_fallback_models
+        if m != settings.gemini_model
     ]
 
     last_error=None

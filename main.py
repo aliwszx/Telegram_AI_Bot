@@ -22,6 +22,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def on_startup(bot: Bot) -> None:
+    # Start background scheduler after the event loop is fully running
+    asyncio.create_task(run_scheduler(bot))
+    me = await bot.get_me()
+    logger.info("Bot started: @%s (polling)", me.username)
+
+
 async def main() -> None:
     settings.validate()
     init_sentry()
@@ -32,12 +39,7 @@ async def main() -> None:
     )
     dp = Dispatcher()
     dp.include_router(router)
-
-    # Start background scheduler
-    asyncio.create_task(run_scheduler(bot))
-
-    me = await bot.get_me()
-    logger.info("Bot started: @%s (polling)", me.username)
+    dp.startup.register(on_startup)
 
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 

@@ -67,8 +67,34 @@ async def _get_user(user_id: int, username=None, first_name=None) -> dict:
     await _cache.set_user(user_id, row)
     return row
 
-# In-memory cache of last failed request per user (for retry button)
+# In-memory cache of last failed request per user (for retry button).
+# Each entry: {"text": ..., "media_bytes": ..., "media_mime": ..., "ts": float}
+# Entries older than _LAST_FAILED_TTL seconds or when dict > _LAST_FAILED_MAX are evicted.
 _last_failed: dict[int, dict] = {}
+_LAST_FAILED_TTL  = 300   # seconds — retry window
+_LAST_FAILED_MAX  = 2000  # max entries before forced eviction
+
+
+def _store_last_failed(user_id: int, payload: dict) -> None:
+    """Store a failed request payload with a timestamp; evict stale/excess entries."""
+    payload["ts"] = time.monotonic()
+    _last_failed[user_id] = payload
+    # Evict expired entries when dict grows large
+    if len(_last_failed) > _LAST_FAILED_MAX:
+        cutoff = time.monotonic() - _LAST_FAILED_TTL
+        stale = [uid for uid, v in _last_failed.items() if v.get("ts", 0) < cutoff]
+        for uid in stale:
+            _last_failed.pop(uid, None)
+
+
+def _pop_last_failed(user_id: int) -> dict | None:
+    """Return and remove a pending retry, or None if expired/absent."""
+    entry = _last_failed.pop(user_id, None)
+    if entry is None:
+        return None
+    if time.monotonic() - entry.get("ts", 0) > _LAST_FAILED_TTL:
+        return None
+    return entry
 
 # ── Broadcast state ────────────────────────────────────────────────────────
 # Keyed by admin user_id
@@ -92,7 +118,12 @@ async def _get_user_lock(user_id: int) -> asyncio.Lock:
             _user_locks[user_id] = asyncio.Lock()
         if len(_user_locks) > 500:
             cutoff = time.monotonic() - 600
-            stale = [uid for uid, ts in _user_locks_meta.items() if ts < cutoff]
+            stale = [
+                uid for uid, ts in _user_locks_meta.items()
+                if ts < cutoff
+                # Only remove if the lock is not currently held
+                and not _user_locks.get(uid, asyncio.Lock()).locked()
+            ]
             for uid in stale:
                 _user_locks.pop(uid, None)
                 _user_locks_meta.pop(uid, None)
@@ -1480,7 +1511,7 @@ async def _stream_ai_reply(
 @router.callback_query(F.data == "retry_last")
 async def cb_retry_last(callback: CallbackQuery) -> None:
     lang = _lang(callback.from_user)
-    pending = _last_failed.pop(callback.from_user.id, None)
+    pending = _pop_last_failed(callback.from_user.id)
     if not pending:
         await callback.answer(t("retry_expired", lang), show_alert=True)
         return
@@ -1579,9 +1610,9 @@ async def _handle_ai_message(
         except GeminiRateLimitError as exc:
             logger.warning("Gemini rate-limited for user %s: %s", user.id, exc)
             _capture(exc)
-            _last_failed[user.id] = {
+            _store_last_failed(user.id, {
                 "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
-            }
+            })
             await message.answer(
                 t("ai_rate_limit", lang, retry_after=exc.retry_after),
                 parse_mode="HTML",
@@ -1591,9 +1622,9 @@ async def _handle_ai_message(
         except GeminiError as exc:
             logger.exception("Gemini error for user %s: %s", user.id, exc)
             _capture(exc)
-            _last_failed[user.id] = {
+            _store_last_failed(user.id, {
                 "text": user_text, "media_bytes": media_bytes, "media_mime": media_mime,
-            }
+            })
             await message.answer(t("ai_error", lang), reply_markup=_retry_keyboard(lang))
             return
         finally:
