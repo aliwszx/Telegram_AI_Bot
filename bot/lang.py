@@ -165,6 +165,7 @@ AZ: dict[str, str] = {
         "• /invite ilə dost dəvət et (bonus mesaj)"
     ),
     "limit_warning":  "ℹ️ Bugün üçün qalan limit: <b>{remaining}/{limit}</b>\n💡 /upgrade ilə Premium al — 500 mesaj/gün!",
+    "message_too_long": "✋ Mesajın çox uzundur ({len}/{max} simvol). Zəhmət olmasa qısalt və yenidən göndər.",
     "processing":     "⏳ Əvvəlki sorğun hələ cavablanır, bir az gözlə...",
     "db_error":       "😕 Verilənlər bazasında xəta baş verdi, bir az sonra yenidən cəhd et.",
     "ai_rate_limit":  "⏳ <b>AI yüklənib</b>\n<b>{retry_after} saniyə</b> sonra yenidən cəhd et.",
@@ -442,6 +443,7 @@ EN: dict[str, str] = {
         "• Invite friends with /invite (bonus messages)"
     ),
     "limit_warning":  "ℹ️ Remaining today: <b>{remaining}/{limit}</b>\n💡 Get Premium with /upgrade — 500 msg/day!",
+    "message_too_long": "✋ Your message is too long ({len}/{max} characters). Please shorten it and try again.",
     "processing":     "⏳ Your previous request is still processing, please wait...",
     "db_error":       "😕 A database error occurred, please try again later.",
     "ai_rate_limit":  "⏳ <b>AI is busy</b>\nTry again in <b>{retry_after} seconds</b>.",
@@ -709,6 +711,7 @@ RU: dict[str, str] = {
         "• Пригласи друга через /invite (бонусные сообщения)"
     ),
     "limit_warning":  "ℹ️ Осталось сегодня: <b>{remaining}/{limit}</b>\n💡 Купи Premium через /upgrade — 500 сообщений/день!",
+    "message_too_long": "✋ Сообщение слишком длинное ({len}/{max} символов). Сократите его и отправьте снова.",
     "processing":     "⏳ Предыдущий запрос ещё обрабатывается, подожди...",
     "db_error":       "😕 Произошла ошибка базы данных, попробуй позже.",
     "ai_rate_limit":  "⏳ <b>AI перегружен</b>\nПопробуй снова через <b>{retry_after} секунд</b>.",
@@ -976,6 +979,7 @@ TR: dict[str, str] = {
         "• /invite ile arkadaş davet et (bonus mesaj)"
     ),
     "limit_warning":  "ℹ️ Bugün kalan limit: <b>{remaining}/{limit}</b>\n💡 /upgrade ile Premium al — günlük 500 mesaj!",
+    "message_too_long": "✋ Mesajın çok uzun ({len}/{max} karakter). Lütfen kısalt ve tekrar gönder.",
     "processing":     "⏳ Önceki sorgun hâlâ yanıtlanıyor, biraz bekle...",
     "db_error":       "😕 Veritabanında hata oluştu, biraz sonra tekrar dene.",
     "ai_rate_limit":  "⏳ <b>AI meşgul</b>\n<b>{retry_after} saniye</b> sonra tekrar dene.",
@@ -1243,6 +1247,7 @@ DE: dict[str, str] = {
         "• Freunde mit /invite einladen (Bonus-Nachrichten)"
     ),
     "limit_warning":  "ℹ️ Heute verbleibend: <b>{remaining}/{limit}</b>\n💡 Premium mit /upgrade holen — 500 Nachrichten/Tag!",
+    "message_too_long": "✋ Deine Nachricht ist zu lang ({len}/{max} Zeichen). Bitte kürze sie und versuche es erneut.",
     "processing":     "⏳ Deine vorherige Anfrage wird noch bearbeitet, bitte warte...",
     "db_error":       "😕 Datenbankfehler, bitte versuche es später erneut.",
     "ai_rate_limit":  "⏳ <b>AI ist ausgelastet</b>\nVersuche es in <b>{retry_after} Sekunden</b> erneut.",
@@ -1510,6 +1515,7 @@ FR: dict[str, str] = {
         "• Inviter des amis avec /invite (messages bonus)"
     ),
     "limit_warning":  "ℹ️ Restant aujourd'hui: <b>{remaining}/{limit}</b>\n💡 Obtiens Premium avec /upgrade — 500 messages/jour!",
+    "message_too_long": "✋ Ton message est trop long ({len}/{max} caractères). Raccourcis-le et réessaie.",
     "processing":     "⏳ Ta précédente requête est encore en cours, patiente un peu...",
     "db_error":       "😕 Erreur de base de données, réessaie plus tard.",
     "ai_rate_limit":  "⏳ <b>L'IA est occupée</b>\nRéessaie dans <b>{retry_after} secondes</b>.",
@@ -1777,6 +1783,7 @@ ES: dict[str, str] = {
         "• /invite para invitar amigos (mensajes de bono)"
     ),
     "limit_warning":  "ℹ️ Límite restante hoy: <b>{remaining}/{limit}</b>\n💡 Obtén Premium con /upgrade — ¡500 msg/día!",
+    "message_too_long": "✋ Tu mensaje es demasiado largo ({len}/{max} caracteres). Acórtalo e inténtalo de nuevo.",
     "processing":     "⏳ Tu consulta anterior aún se está procesando, espera un momento...",
     "db_error":       "😕 Error en la base de datos, inténtalo de nuevo en un momento.",
     "ai_rate_limit":  "⏳ <b>IA ocupada</b>\nInténtalo de nuevo en <b>{retry_after} segundos</b>.",
@@ -2044,6 +2051,7 @@ AR: dict[str, str] = {
         "• /invite لدعوة الأصدقاء (رسائل مكافأة)"
     ),
     "limit_warning":  "ℹ️ الحد المتبقي اليوم: <b>{remaining}/{limit}</b>\n💡 احصل على Premium مع /upgrade — 500 رسالة/يوم!",
+    "message_too_long": "✋ رسالتك طويلة جدًا ({len}/{max} حرفًا). يرجى تقصيرها والمحاولة مرة أخرى.",
     "processing":     "⏳ طلبك السابق لا يزال قيد المعالجة، انتظر لحظة...",
     "db_error":       "😕 حدث خطأ في قاعدة البيانات، حاول مرة أخرى بعد لحظة.",
     "ai_rate_limit":  "⏳ <b>الذكاء الاصطناعي مشغول</b>\nحاول مرة أخرى بعد <b>{retry_after} ثانية</b>.",
@@ -2311,6 +2319,7 @@ ZH: dict[str, str] = {
         "• /invite 邀请好友（获取奖励消息）"
     ),
     "limit_warning":  "ℹ️ 今日剩余限额：<b>{remaining}/{limit}</b>\n💡 /upgrade 获取高级会员 — 每天500条！",
+    "message_too_long": "✋ 你的消息太长了（{len}/{max} 字符）。请缩短后重试。",
     "processing":     "⏳ 上一个请求仍在处理中，请稍候...",
     "db_error":       "😕 数据库发生错误，请稍后再试。",
     "ai_rate_limit":  "⏳ <b>AI 繁忙</b>\n请在 <b>{retry_after} 秒</b>后重试。",
@@ -2578,6 +2587,7 @@ PT: dict[str, str] = {
         "• /invite para convidar amigos (mensagens bônus)"
     ),
     "limit_warning":  "ℹ️ Limite restante hoje: <b>{remaining}/{limit}</b>\n💡 Obtenha Premium com /upgrade — 500 msg/dia!",
+    "message_too_long": "✋ Sua mensagem é muito longa ({len}/{max} caracteres). Por favor, encurte-a e tente novamente.",
     "processing":     "⏳ Sua consulta anterior ainda está sendo processada, aguarde...",
     "db_error":       "😕 Erro no banco de dados, tente novamente em breve.",
     "ai_rate_limit":  "⏳ <b>IA ocupada</b>\nTente novamente em <b>{retry_after} segundos</b>.",
@@ -2845,6 +2855,7 @@ IT: dict[str, str] = {
         "• /invite per invitare amici (messaggi bonus)"
     ),
     "limit_warning":  "ℹ️ Limite rimanente oggi: <b>{remaining}/{limit}</b>\n💡 Ottieni Premium con /upgrade — 500 msg/giorno!",
+    "message_too_long": "✋ Il tuo messaggio è troppo lungo ({len}/{max} caratteri). Per favore abbrevialo e riprova.",
     "processing":     "⏳ La tua richiesta precedente è ancora in elaborazione, aspetta un momento...",
     "db_error":       "😕 Errore nel database, riprova tra poco.",
     "ai_rate_limit":  "⏳ <b>IA occupata</b>\nRiprova tra <b>{retry_after} secondi</b>.",
