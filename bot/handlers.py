@@ -1712,6 +1712,16 @@ async def handle_ai_chat(message: Message) -> None:
     user_text = message.text.strip()
     if not user_text:
         return
+
+    if len(user_text) > settings.max_message_chars:
+        _row = await _get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+        lang = _lang_from_row(message.from_user, _row)
+        await message.answer(
+            t("message_too_long", lang, len=len(user_text), max=settings.max_message_chars),
+            parse_mode="HTML",
+        )
+        return
+
     await _handle_ai_message(message, user_text)
 
 
