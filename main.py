@@ -12,6 +12,7 @@ from aiogram.enums import ParseMode
 
 from bot.middlewares import FloodControlMiddleware
 
+from bot.config import settings
 from bot.handlers import router
 from bot.scheduler import run_scheduler
 from bot.sentry import init_sentry
