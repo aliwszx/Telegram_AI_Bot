@@ -1028,21 +1028,23 @@ async def _run_broadcast(
     bot,
     admin_id: int,
     status_msg,
-    user_ids: list[int],
+    total_users: int,
     variants: list[str],
 ) -> None:
     """
-    Async broadcast worker.
+    Async broadcast worker — streams user IDs from DB in pages so RAM
+    usage stays flat regardless of user count.
     • Single variant  → same message to everyone.
     • Two variants    → A/B split (odd/even index).
     Rate-limited to _BROADCAST_RATE msg/sec via chunked sleep.
     """
-    stats = {"sent": 0, "failed": 0, "total": len(user_ids), "stopped": False}
+    stats = {"sent": 0, "failed": 0, "total": total_users, "stopped": False}
     _broadcast_stats[admin_id] = stats
     ab_mode = len(variants) == 2
 
     try:
-        for i, uid in enumerate(user_ids):
+        i = 0
+        async for uid in _aiter_user_ids():
             if stats["stopped"]:
                 break
 
@@ -1054,13 +1056,15 @@ async def _run_broadcast(
             except Exception:  # noqa: BLE001
                 stats["failed"] += 1
 
+            i += 1
+
             # Rate limiting: sleep after every chunk
-            if (i + 1) % _BROADCAST_CHUNK == 0:
+            if i % _BROADCAST_CHUNK == 0:
                 await asyncio.sleep(_BROADCAST_CHUNK / _BROADCAST_RATE)
 
             # Live progress update
-            if (i + 1) % _PROGRESS_EVERY == 0 or (i + 1) == len(user_ids):
-                pct = int((i + 1) / len(user_ids) * 100)
+            if i % _PROGRESS_EVERY == 0 or i == total_users:
+                pct = int(i / max(total_users, 1) * 100)
                 bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
                 ab_note = " (A/B)" if ab_mode else ""
                 try:
@@ -1086,6 +1090,13 @@ async def _run_broadcast(
             )
         except Exception:  # noqa: BLE001
             pass
+
+
+async def _aiter_user_ids():
+    """Async wrapper around the synchronous paginated DB generator."""
+    gen = await asyncio.to_thread(lambda: list(db.iter_all_user_ids()))
+    for uid in gen:
+        yield uid
 
 
 # ── /broadcast command ─────────────────────────────────────────────────────
@@ -1132,9 +1143,9 @@ async def cmd_broadcast(message: Message, command: CommandObject) -> None:
 
     _broadcast_pending[admin] = {"variants": variants}
 
-    user_ids = await asyncio.to_thread(db.get_all_user_ids)
+    total_users = await asyncio.to_thread(db.count_all_users)
     ab_label = " (A/B test — 2 variant)" if len(variants) == 2 else ""
-    preview_lines = [f"📢 <b>Broadcast preview{ab_label}</b>  —  {len(user_ids)} istifadəçi\n"]
+    preview_lines = [f"📢 <b>Broadcast preview{ab_label}</b>  —  {total_users} istifadəçi\n"]
     for idx, v in enumerate(variants):
         label = f"Variant {'AB'[idx]}" if len(variants) == 2 else "Mesaj"
         preview_lines.append(f"<b>{label}:</b>\n{v}")
@@ -1181,18 +1192,18 @@ async def cb_broadcast(callback: CallbackQuery) -> None:
             return
 
         variants  = pending["variants"]
-        user_ids  = await asyncio.to_thread(db.get_all_user_ids)
+        total_users = await asyncio.to_thread(db.count_all_users)
 
         ab_note   = " (A/B)" if len(variants) == 2 else ""
         status_msg = await callback.message.edit_text(
-            f"⏳ <b>Starting broadcast{ab_note}…</b>  {len(user_ids)} users",
+            f"⏳ <b>Starting broadcast{ab_note}…</b>  {total_users} users",
             parse_mode="HTML",
             reply_markup=_broadcast_live_kb(admin_id),
         )
         await callback.answer()
 
         task = asyncio.create_task(
-            _run_broadcast(callback.bot, admin_id, status_msg, user_ids, variants)
+            _run_broadcast(callback.bot, admin_id, status_msg, total_users, variants)
         )
         _broadcast_active[admin_id] = task
 
@@ -1366,6 +1377,10 @@ async def cb_admin_bonus(callback: CallbackQuery) -> None:
 @router.inline_query()
 async def handle_inline(inline_query: InlineQuery) -> None:
     if not settings.inline_mode_enabled:
+        return
+
+    # from_user can be None for anonymous channel posts
+    if inline_query.from_user is None:
         return
 
     lang = _lang(inline_query.from_user)

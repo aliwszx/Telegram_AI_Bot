@@ -106,13 +106,11 @@ def get_preferred_lang(user: dict) -> str | None:
 
 @with_retry()
 def add_bonus_messages(user_id: int, amount: int) -> None:
-    user = get_user(user_id)
-    if user is None:
-        return
-    current = user.get("bonus_messages", 0) or 0
-    _client.table("users").update(
-        {"bonus_messages": current + amount}
-    ).eq("id", user_id).execute()
+    # Use SQL expression to avoid read-modify-write race condition
+    _client.rpc("increment_bonus_messages", {
+        "p_user_id": user_id,
+        "p_amount": amount,
+    }).execute()
 
 
 def get_daily_limit(plan: Plan, bonus: int = 0) -> int:
@@ -188,10 +186,13 @@ def activate_premium(user_id: int, days: int) -> dt.datetime:
         {
             "plan": "premium",
             "premium_until": until.isoformat(),
-            "total_payments": _increment_field(user_id, "total_payments", 1),
-            "total_stars_spent": _increment_field(user_id, "total_stars_spent", settings.stars_price),
         }
     ).eq("id", user_id).execute()
+    # Atomically increment counters with a single RPC to avoid read-modify-write races
+    _client.rpc("increment_payment_counters", {
+        "p_user_id": user_id,
+        "p_stars": settings.stars_price,
+    }).execute()
     # Log payment
     _client.table("payments").insert({
         "user_id": user_id,
@@ -201,12 +202,6 @@ def activate_premium(user_id: int, days: int) -> dt.datetime:
     }).execute()
     return until
 
-
-def _increment_field(user_id: int, field: str, by: int) -> int:
-    user = get_user(user_id)
-    if user is None:
-        return by
-    return (user.get(field, 0) or 0) + by
 
 
 @with_retry()
@@ -424,6 +419,34 @@ def search_user(query: str) -> dict | None:
 def get_all_user_ids() -> list[int]:
     result = _client.table("users").select("id").execute()
     return [row["id"] for row in result.data]
+
+
+def iter_all_user_ids(page_size: int = 1000):
+    """
+    Generator that yields user IDs in pages to avoid loading all into RAM.
+    Use this for large broadcasts instead of get_all_user_ids().
+    """
+    offset = 0
+    while True:
+        result = (
+            _client.table("users")
+            .select("id")
+            .order("id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        for row in rows:
+            yield row["id"]
+        if len(rows) < page_size:
+            break
+        offset += page_size
+
+
+@with_retry()
+def count_all_users() -> int:
+    result = _client.table("users").select("id", count="exact").execute()
+    return result.count or 0
 
 
 @with_retry()

@@ -127,7 +127,7 @@ class Settings:
     inline_mode_enabled: bool = field(default_factory=lambda: _get_bool("INLINE_MODE_ENABLED", True))
     premium_expiry_warning_days: int = field(default_factory=lambda: _get_int("PREMIUM_EXPIRY_WARNING_DAYS", 3))
 
-    def validate(self) -> None:
+    def validate(self, webhook_mode: bool = False) -> None:
         # Ən az bir API key olmalıdır
         if not self.gemini_api_keys and not self.gemini_api_key:
             raise RuntimeError(
@@ -144,6 +144,9 @@ class Settings:
             ]
             if not value
         ]
+        if webhook_mode and not self.webhook_base_url:
+            missing.append("WEBHOOK_BASE_URL")
+
         if missing:
             raise RuntimeError(
                 f"Missing required environment variables: {', '.join(missing)}. "

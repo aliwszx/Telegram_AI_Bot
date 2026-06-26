@@ -206,3 +206,23 @@ ORDER BY month DESC;
 
 -- ── Migration: add preferred_lang column (run once if upgrading) ──────────
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_lang TEXT;
+
+
+-- ── Atomic counter helpers ────────────────────────────────────────────────
+-- Avoids read-modify-write races when incrementing bonus_messages or
+-- payment counters from application code.
+
+CREATE OR REPLACE FUNCTION increment_bonus_messages(p_user_id bigint, p_amount int)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE users
+  SET bonus_messages = COALESCE(bonus_messages, 0) + p_amount
+  WHERE id = p_user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION increment_payment_counters(p_user_id bigint, p_stars int)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE users
+  SET total_payments    = COALESCE(total_payments, 0) + 1,
+      total_stars_spent = COALESCE(total_stars_spent, 0) + p_stars
+  WHERE id = p_user_id;
+$$;

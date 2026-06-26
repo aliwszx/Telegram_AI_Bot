@@ -46,7 +46,7 @@ async def on_shutdown(bot: Bot) -> None:
 
 
 def main() -> None:
-    settings.validate()
+    settings.validate(webhook_mode=True)
     init_sentry()
 
     bot = Bot(
