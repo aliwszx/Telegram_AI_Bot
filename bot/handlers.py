@@ -105,6 +105,24 @@ _broadcast_stats:   dict[int, dict] = {}   # live progress
 # ── Onboarding state ───────────────────────────────────────────────────────
 # Tracks which onboarding step a new user is on: 1 | 2 | 3
 _onboarding: dict[int, int] = {}   # {user_id: step}
+_ONBOARDING_TTL = 600  # seconds — auto-expire incomplete onboarding
+_onboarding_ts: dict[int, float] = {}  # {user_id: start_timestamp}
+
+
+def _onboarding_set(user_id: int, step: int) -> None:
+    _onboarding[user_id] = step
+    _onboarding_ts[user_id] = time.monotonic()
+    # Evict stale incomplete sessions
+    cutoff = time.monotonic() - _ONBOARDING_TTL
+    stale = [uid for uid, ts in _onboarding_ts.items() if ts < cutoff]
+    for uid in stale:
+        _onboarding.pop(uid, None)
+        _onboarding_ts.pop(uid, None)
+
+
+def _onboarding_clear(user_id: int) -> None:
+    _onboarding.pop(user_id, None)
+    _onboarding_ts.pop(user_id, None)
 
 # Per-user lock: prevent the same user from sending multiple concurrent requests
 _user_locks: dict[int, asyncio.Lock] = {}
@@ -305,7 +323,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         return
 
     # ── New user — start 3-step onboarding ────────────────────────────────
-    _onboarding[user.id] = 1
+    _onboarding_set(user.id, 1)
     await message.answer(
         f"Salam, <b>{name}</b>! 👋\n\n"
         "Mən AI köməkçinizəm. Başlamaq üçün — <b>nə etmək istərdiniz?</b>",
@@ -335,7 +353,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
         suggested_mode = _GOAL_MODE.get(value, "default")
         # Pre-select the suggested mode silently
         await asyncio.to_thread(db.set_chat_mode, user.id, suggested_mode)
-        _onboarding[user.id] = 2
+        _onboarding_set(user.id, 2)
 
         goal_labels = {
             "chat":      "💬 Söhbət / Kömək",
@@ -367,7 +385,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
             return
 
         await asyncio.to_thread(db.set_chat_mode, user.id, value)
-        _onboarding[user.id] = 3
+        _onboarding_set(user.id, 3)
 
         await callback.message.edit_text(
             f"✅ <b>{mode_name(value, lang)}</b> rejimi aktivdir.\n\n"
@@ -383,7 +401,7 @@ async def cb_onboarding(callback: CallbackQuery) -> None:
 
     # ── Finish — show main menu ────────────────────────────────────────────
     elif action == "finish":
-        _onboarding.pop(user.id, None)
+        _onboarding_clear(user.id)
         name = user.first_name or user.username or t("guest_name", lang)
         await callback.message.edit_text(
             t("welcome", lang, name=name),
