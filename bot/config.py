@@ -105,6 +105,7 @@ class Settings:
     history_limit: int = field(default_factory=lambda: _get_int("HISTORY_LIMIT", 15))
     free_daily_limit: int = field(default_factory=lambda: _get_int("FREE_DAILY_LIMIT", 20))
     premium_daily_limit: int = field(default_factory=lambda: _get_int("PREMIUM_DAILY_LIMIT", 500))
+    max_message_chars: int = field(default_factory=lambda: _get_int("MAX_MESSAGE_CHARS", 2000))
 
     # ── Payment ────────────────────────────────────────────────────────────
     stars_price: int = field(default_factory=lambda: _get_int("STARS_PRICE", 100))
