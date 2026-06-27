@@ -1652,13 +1652,13 @@ async def _handle_ai_message(
         try:
             if settings.streaming_enabled:
                 reply_text, model_used = await _stream_ai_reply(
-                    message, history, user_text, user.language_code, mode,
+                    message, history, user_text, lang, mode,
                     media_bytes, media_mime, web_search,
                 )
             else:
                 reply_text, model_used = await asyncio.to_thread(
                     generate_reply,
-                    history, user_text, user.language_code, mode,
+                    history, user_text, lang, mode,
                     media_bytes, media_mime, web_search,
                 )
         except GeminiRateLimitError as exc:
