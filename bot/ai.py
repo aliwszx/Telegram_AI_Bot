@@ -292,9 +292,12 @@ class GeminiRateLimitError(GeminiError):
 
 class GeminiClientManager:
     """
-    Manages a pool of Gemini API clients with smart key rotation.
-    On 429, the offending key is skipped and the next one is tried immediately.
-    Cooldown resets after 60 seconds so keys are reused once RPM window passes.
+    Manages a pool of Gemini API clients with per-key rate tracking.
+
+    Strategy:
+    - Each request picks the key with the longest time since last use (least-recently-used).
+    - On 429, the key is put in cooldown for 60s and the next best key is tried.
+    - This spreads load evenly across all keys so no single key hits RPM.
     """
 
     def __init__(self):
@@ -316,34 +319,56 @@ class GeminiClientManager:
         if not self.clients:
             raise GeminiError("No Gemini API keys")
 
-        self._index = 0
+        n = len(self.clients)
+        # last_used: when each key was last given out (stagger so key 0 is freshest)
+        now = time.time()
+        self._last_used: list[float] = [now - (n - i) for i in range(n)]
         self._cooldowns: dict[int, float] = {}  # index -> cooldown_until timestamp
+        self._lock = __import__("threading").Lock()
 
     def get(self) -> genai.Client:
-        """Return next available client (not in cooldown)."""
-        now = time.time()
-        n = len(self.clients)
-        for _ in range(n):
-            idx = self._index % n
-            self._index += 1
-            cooldown_until = self._cooldowns.get(idx, 0)
-            if now >= cooldown_until:
-                return self.clients[idx]
-        # All keys in cooldown — return least-recently cooled one
-        best = min(self._cooldowns, key=self._cooldowns.get)
-        return self.clients[best]
+        """
+        Return the least-recently-used client that is not in cooldown.
+        This spreads requests evenly across all keys.
+        """
+        with self._lock:
+            now = time.time()
+            n = len(self.clients)
+
+            # Find best available key: not in cooldown, used longest ago
+            best_idx = None
+            best_time = float("inf")
+            for i in range(n):
+                cooldown_until = self._cooldowns.get(i, 0)
+                if now < cooldown_until:
+                    continue  # still cooling down
+                if self._last_used[i] < best_time:
+                    best_time = self._last_used[i]
+                    best_idx = i
+
+            if best_idx is None:
+                # All in cooldown — pick the one that recovers soonest
+                best_idx = min(self._cooldowns, key=self._cooldowns.get)
+
+            self._last_used[best_idx] = now
+            return self.clients[best_idx]
 
     def mark_rate_limited(self, client: genai.Client, cooldown_seconds: int = 60) -> None:
         """Mark a client as rate-limited; skip it for cooldown_seconds."""
-        try:
-            idx = self.clients.index(client)
-            self._cooldowns[idx] = time.time() + cooldown_seconds
-            logger.warning(
-                "API key #%d rate-limited, cooling down for %ds.",
-                idx, cooldown_seconds
-            )
-        except ValueError:
-            pass
+        with self._lock:
+            try:
+                idx = self.clients.index(client)
+                self._cooldowns[idx] = time.time() + cooldown_seconds
+                logger.warning(
+                    "API key #%d rate-limited, cooling down for %ds. "
+                    "Available keys: %d/%d",
+                    idx, cooldown_seconds,
+                    sum(1 for i in range(len(self.clients))
+                        if time.time() >= self._cooldowns.get(i, 0)),
+                    len(self.clients),
+                )
+            except ValueError:
+                pass
 
 
 
