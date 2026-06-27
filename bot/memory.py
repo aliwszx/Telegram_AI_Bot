@@ -287,7 +287,10 @@ def build_enriched_history(
         })
 
     # 2. Semantic layer — past messages relevant to this query
-    if SEMANTIC_TOP_K > 0:
+    #    Skip entirely if conversation is still short: there's nothing
+    #    outside the recent window worth searching, so don't pay for
+    #    an extra embedding API call on every single message.
+    if SEMANTIC_TOP_K > 0 and len(recent_messages) > RECENT_WINDOW:
         hits = semantic_search(user_id, current_query)
         if hits:
             # De-duplicate against recent window
