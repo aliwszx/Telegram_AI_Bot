@@ -291,7 +291,11 @@ class GeminiRateLimitError(GeminiError):
 
 
 class GeminiClientManager:
-
+    """
+    Manages a pool of Gemini API clients with smart key rotation.
+    On 429, the offending key is skipped and the next one is tried immediately.
+    Cooldown resets after 60 seconds so keys are reused once RPM window passes.
+    """
 
     def __init__(self):
 
@@ -303,27 +307,43 @@ class GeminiClientManager:
         self.clients = [
             genai.Client(
                 api_key=k,
-                http_options=types.HttpOptions(timeout=15_000),  # 15s, ms
+                http_options=types.HttpOptions(timeout=15_000),
             )
             for k in keys
             if k
         ]
 
-
         if not self.clients:
-            raise GeminiError(
-                "No Gemini API keys"
+            raise GeminiError("No Gemini API keys")
+
+        self._index = 0
+        self._cooldowns: dict[int, float] = {}  # index -> cooldown_until timestamp
+
+    def get(self) -> genai.Client:
+        """Return next available client (not in cooldown)."""
+        now = time.time()
+        n = len(self.clients)
+        for _ in range(n):
+            idx = self._index % n
+            self._index += 1
+            cooldown_until = self._cooldowns.get(idx, 0)
+            if now >= cooldown_until:
+                return self.clients[idx]
+        # All keys in cooldown — return least-recently cooled one
+        best = min(self._cooldowns, key=self._cooldowns.get)
+        return self.clients[best]
+
+    def mark_rate_limited(self, client: genai.Client, cooldown_seconds: int = 60) -> None:
+        """Mark a client as rate-limited; skip it for cooldown_seconds."""
+        try:
+            idx = self.clients.index(client)
+            self._cooldowns[idx] = time.time() + cooldown_seconds
+            logger.warning(
+                "API key #%d rate-limited, cooling down for %ds.",
+                idx, cooldown_seconds
             )
-
-
-        self.pool = itertools.cycle(
-            self.clients
-        )
-
-
-    def get(self):
-
-        return next(self.pool)
+        except ValueError:
+            pass
 
 
 
@@ -503,7 +523,7 @@ def generate_reply(
 
     for model in models:
 
-        for attempt in range(3):
+        for attempt in range(len(client_manager.clients) + 1):
 
             try:
 
@@ -572,13 +592,9 @@ def generate_reply(
                     break
 
                 if "429" in err or "quota" in err or "resource_exhausted" in err:
-                    # Only retry once with short sleep; then try next model
-                    if attempt == 0:
-                        time.sleep(2)
-                        continue
-                    # Second 429 — give up on this model, try next
-                    logger.warning("Model %s rate-limited twice, switching model.", model)
-                    break
+                    # Mark key as rate-limited (60s cooldown), try next key immediately
+                    client_manager.mark_rate_limited(client, cooldown_seconds=60)
+                    continue
 
                 break
 
@@ -623,7 +639,7 @@ def generate_reply_stream(
 
     for model in models:
 
-        for attempt in range(3):
+        for attempt in range(len(client_manager.clients) + 1):
 
             try:
 
@@ -691,11 +707,9 @@ def generate_reply_stream(
                     break
 
                 if "429" in err or "quota" in err or "resource_exhausted" in err:
-                    if attempt == 0:
-                        time.sleep(2)
-                        continue
-                    logger.warning("Stream: model %s rate-limited twice, switching.", model)
-                    break
+                    # Mark key as rate-limited (60s cooldown), try next key immediately
+                    client_manager.mark_rate_limited(client, cooldown_seconds=60)
+                    continue
 
                 break
 
