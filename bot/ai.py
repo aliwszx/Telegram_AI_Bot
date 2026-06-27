@@ -370,6 +370,25 @@ class GeminiClientManager:
             except ValueError:
                 pass
 
+    def seconds_until_available(self) -> float:
+        """
+        Return how many seconds until at least one key is out of cooldown.
+        Returns 0.0 if a key is already available.
+        """
+        now = time.time()
+        for i in range(len(self.clients)):
+            if now >= self._cooldowns.get(i, 0):
+                return 0.0
+        if not self._cooldowns:
+            return 0.0
+        soonest = min(self._cooldowns.values())
+        return max(0.0, soonest - now)
+
+    def has_available_key(self) -> bool:
+        """Return True if at least one key is not in cooldown."""
+        now = time.time()
+        return any(now >= self._cooldowns.get(i, 0) for i in range(len(self.clients)))
+
 
 
 client_manager = GeminiClientManager()
@@ -548,80 +567,72 @@ def generate_reply(
 
     for model in models:
 
-        for attempt in range(len(client_manager.clients) + 1):
+        client = client_manager.get()
 
-            try:
+        try:
 
-                client=client_manager.get()
+            # Build tools list — web search if requested
+            tools = None
+            if web_search:
+                tools = [
+                    types.Tool(
+                        google_search=types.GoogleSearch()
+                    )
+                ]
 
+            response = client.models.generate_content(
 
-                # Build tools list — web search if requested
-                tools = None
-                if web_search:
-                    tools = [
-                        types.Tool(
-                            google_search=types.GoogleSearch()
-                        )
-                    ]
+                model=model,
 
-                response = client.models.generate_content(
+                contents=
+                build_contents(
+                    history,
+                    new_message,
+                    mode,
+                    media_bytes=media_bytes,
+                    media_mime=media_mime,
+                ),
 
-                    model=model,
-
-                    contents=
-                    build_contents(
-                        history,
-                        new_message,
+                config=
+                types.GenerateContentConfig(
+                    system_instruction=
+                    build_system_prompt(
                         mode,
-                        media_bytes=media_bytes,
-                        media_mime=media_mime,
+                        language_hint
                     ),
-
-                    config=
-                    types.GenerateContentConfig(
-                        system_instruction=
-                        build_system_prompt(
-                            mode,
-                            language_hint
-                        ),
-                        temperature=0.7,
-                        tools=tools,
-                        thinking_config=_fast_thinking_config(model),
-                    )
+                    temperature=0.7,
+                    tools=tools,
+                    thinking_config=_fast_thinking_config(model),
                 )
+            )
 
 
-                text=(
-                    response.text
-                    or ""
-                ).strip()
+            text=(
+                response.text
+                or ""
+            ).strip()
 
 
-                if text:
-
-                    return (
-                        text,
-                        model
-                    )
+            if text:
+                return (text, model)
 
 
-            except Exception as e:
+        except Exception as e:
 
-                last_error=e
+            last_error=e
+            err=str(e).lower()
 
-                err=str(e).lower()
+            if "404" in err or "not found" in err:
+                logger.warning("Model %s not found, skipping.", model)
 
-                # 404 = model does not exist → skip immediately, no retry
-                if "404" in err or "not found" in err:
-                    logger.warning("Model %s not found, skipping.", model)
-                    break
+            elif "429" in err or "quota" in err or "resource_exhausted" in err:
+                # One 429 = entire model is throttled for this IP/region.
+                # Mark the key and immediately move to next model — don't try other keys.
+                client_manager.mark_rate_limited(client, cooldown_seconds=62)
+                logger.warning("Model %s rate-limited, switching to next model.", model)
 
-                if "429" in err or "quota" in err or "resource_exhausted" in err:
-                    # Mark key as rate-limited (60s cooldown), try next key immediately
-                    client_manager.mark_rate_limited(client, cooldown_seconds=60)
-                    continue
-
-                break
+            # Either way, move to next model
+            continue
 
 
 
@@ -664,79 +675,68 @@ def generate_reply_stream(
 
     for model in models:
 
-        for attempt in range(len(client_manager.clients) + 1):
+        client = client_manager.get()
 
-            try:
+        try:
 
-                client=client_manager.get()
+            accumulated=""
+            chunk_count=0
 
-                accumulated=""
-                chunk_count=0
+            for chunk in client.models.generate_content_stream(
 
-                for chunk in client.models.generate_content_stream(
+                model=model,
 
-                    model=model,
+                contents=
+                build_contents(
+                    history,
+                    new_message,
+                    mode,
+                    media_bytes=media_bytes,
+                    media_mime=media_mime,
+                ),
 
-                    contents=
-                    build_contents(
-                        history,
-                        new_message,
-                        mode,
-                        media_bytes=media_bytes,
-                        media_mime=media_mime,
-                    ),
+                config=
+                types.GenerateContentConfig(
+                    system_instruction=
+                    build_system_prompt(mode, language_hint),
+                    temperature=0.7,
+                    tools=tools,
+                    thinking_config=_fast_thinking_config(model),
+                )
+            ):
 
-                    config=
-                    types.GenerateContentConfig(
-                        system_instruction=
-                        build_system_prompt(mode, language_hint),
-                        temperature=0.7,
-                        tools=tools,
-                        thinking_config=_fast_thinking_config(model),
-                    )
-                ):
+                piece = (
+                    chunk.text or ""
+                )
 
-                    piece = (
-                        chunk.text or ""
-                    )
-
-                    if not piece:
-                        continue
-
-                    accumulated += piece
-                    chunk_count  += 1
-
-                    # is_final: True on the very last chunk
-                    # We can't know ahead of time, so we yield
-                    # is_final=False for every chunk and let the
-                    # caller detect end-of-stream when the generator
-                    # is exhausted.  The final flag is emitted below.
-                    yield (piece, model, False)
-
-
-                if accumulated:
-                    # Signal end-of-stream with an empty string + True
-                    yield ("", model, True)
-                    return
-
-
-            except Exception as e:
-
-                last_error=e
-
-                err=str(e).lower()
-
-                # 404 = model does not exist → skip immediately
-                if "404" in err or "not found" in err:
-                    logger.warning("Stream: model %s not found, skipping.", model)
-                    break
-
-                if "429" in err or "quota" in err or "resource_exhausted" in err:
-                    # Mark key as rate-limited (60s cooldown), try next key immediately
-                    client_manager.mark_rate_limited(client, cooldown_seconds=60)
+                if not piece:
                     continue
 
-                break
+                accumulated += piece
+                chunk_count  += 1
+
+                yield (piece, model, False)
+
+
+            if accumulated:
+                yield ("", model, True)
+                return
+
+
+        except Exception as e:
+
+            last_error=e
+            err=str(e).lower()
+
+            if "404" in err or "not found" in err:
+                logger.warning("Stream: model %s not found, skipping.", model)
+
+            elif "429" in err or "quota" in err or "resource_exhausted" in err:
+                # One 429 = model throttled for this IP. Move to next model immediately.
+                client_manager.mark_rate_limited(client, cooldown_seconds=62)
+                logger.warning("Stream: model %s rate-limited, switching to next model.", model)
+
+            continue
 
 
     raise GeminiRateLimitError(
