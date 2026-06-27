@@ -335,6 +335,19 @@ client_manager = GeminiClientManager()
 # ==========================
 
 
+def _fast_thinking_config(model: str):
+    """
+    Build a low-latency thinking config appropriate for the model generation.
+    Gemini 3.x uses `thinking_level` ("minimal" disables/limits reasoning).
+    Gemini 2.x / 1.5 use `thinking_budget` (0 disables reasoning).
+    Mixing the two on the wrong generation returns a 400 error, so we must
+    pick the right one based on the model name.
+    """
+    if model.startswith("gemini-3") or model.startswith("gemini-4"):
+        return types.ThinkingConfig(thinking_level="minimal")
+    return types.ThinkingConfig(thinking_budget=0)
+
+
 _LANG_NAMES = {
     "az": "Azerbaijani",
     "en": "English",
@@ -520,6 +533,7 @@ def generate_reply(
                         ),
                         temperature=0.7,
                         tools=tools,
+                        thinking_config=_fast_thinking_config(model),
                     )
                 )
 
@@ -624,6 +638,7 @@ def generate_reply_stream(
                         build_system_prompt(mode, language_hint),
                         temperature=0.7,
                         tools=tools,
+                        thinking_config=_fast_thinking_config(model),
                     )
                 ):
 
