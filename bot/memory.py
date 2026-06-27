@@ -198,8 +198,9 @@ def _embed(text: str) -> list[float] | None:
     try:
         client = _get_gemini_client()
         result = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-001",
             contents=text,
+            config={"output_dimensionality": 768},
         )
         return result.embeddings[0].values  # type: ignore[union-attr]
     except Exception as exc:  # noqa: BLE001
