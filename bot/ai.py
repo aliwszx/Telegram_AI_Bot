@@ -302,7 +302,8 @@ class GeminiClientManager:
 
         self.clients = [
             genai.Client(
-                api_key=k
+                api_key=k,
+                http_options=types.HttpOptions(timeout=15_000),  # 15s, ms
             )
             for k in keys
             if k
@@ -342,10 +343,19 @@ def _fast_thinking_config(model: str):
     Gemini 2.x / 1.5 use `thinking_budget` (0 disables reasoning).
     Mixing the two on the wrong generation returns a 400 error, so we must
     pick the right one based on the model name.
+
+    If the installed google-genai SDK version doesn't support a field
+    (e.g. older SDK without thinking_level), we fail soft and return None
+    instead of raising — better to skip the latency optimization than to
+    silently break every request for that model generation.
     """
-    if model.startswith("gemini-3") or model.startswith("gemini-4"):
-        return types.ThinkingConfig(thinking_level="minimal")
-    return types.ThinkingConfig(thinking_budget=0)
+    try:
+        if model.startswith("gemini-3") or model.startswith("gemini-4"):
+            return types.ThinkingConfig(thinking_level="minimal")
+        return types.ThinkingConfig(thinking_budget=0)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("thinking_config unsupported for %s: %s", model, exc)
+        return None
 
 
 _LANG_NAMES = {
