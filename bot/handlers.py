@@ -1643,7 +1643,9 @@ async def _handle_ai_message(
         raw_history = ctx["history"]
         mode        = ctx.get("chat_mode") or "default"
         # Enrich history: summary compression + semantic recall
-        history = build_enriched_history(user.id, raw_history, user_text or "")
+        history = await asyncio.to_thread(
+            build_enriched_history, user.id, raw_history, user_text or ""
+        )
         usage      = ctx["usage"]
         limit      = ctx["limit"]
         web_search = ctx.get("web_search", False)
