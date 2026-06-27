@@ -338,21 +338,17 @@ client_manager = GeminiClientManager()
 
 def _fast_thinking_config(model: str):
     """
-    Build a low-latency thinking config appropriate for the model generation.
-    Gemini 3.x uses `thinking_level` ("minimal" disables/limits reasoning).
-    Gemini 2.x / 1.5 use `thinking_budget` (0 disables reasoning).
-    Mixing the two on the wrong generation returns a 400 error, so we must
-    pick the right one based on the model name.
-
-    If the installed google-genai SDK version doesn't support a field
-    (e.g. older SDK without thinking_level), we fail soft and return None
-    instead of raising — better to skip the latency optimization than to
-    silently break every request for that model generation.
+    Return a thinking config appropriate for the model, or None to skip.
+    - gemini-2.5-x: skip (budget=0 can be rejected by some variants)
+    - gemini-2.0-x / gemini-1.5-x: budget=0 disables reasoning for speed
+    - Unknown generations (e.g. gemini-3.x which 404s): skip to avoid errors
     """
     try:
-        if model.startswith("gemini-3") or model.startswith("gemini-4"):
-            return types.ThinkingConfig(thinking_level="minimal")
-        return types.ThinkingConfig(thinking_budget=0)
+        if "2.5" in model:
+            return None
+        if model.startswith("gemini-2.") or model.startswith("gemini-1."):
+            return types.ThinkingConfig(thinking_budget=0)
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.debug("thinking_config unsupported for %s: %s", model, exc)
         return None
@@ -377,11 +373,13 @@ def build_system_prompt(mode, language_hint=None):
 
     lang_name = _LANG_NAMES.get(language_hint)
     lang_rule = (
-        f"- The user's app language is {lang_name}. ALWAYS reply in {lang_name}, "
-        f"even if their message is short, slang, missing diacritics, or ambiguous. "
-        f"Only switch language if the user clearly writes in a different language."
+        f"- CRITICAL: You MUST reply ONLY in {lang_name}. "
+        f"Even if the user sends a very short word (like a greeting), a typo, slang, "
+        f"or a word with missing letters/diacritics, you MUST still reply in {lang_name}. "
+        f"Do NOT say you cannot understand simple words — make a reasonable interpretation. "
+        f"Only switch language if the user explicitly writes a full sentence in a different language."
         if lang_name else
-        "- Reply in user's language"
+        "- Detect the user's language from their message and reply in the same language."
     )
 
     return f"""
@@ -568,14 +566,19 @@ def generate_reply(
 
                 err=str(e).lower()
 
+                # 404 = model does not exist → skip immediately, no retry
+                if "404" in err or "not found" in err:
+                    logger.warning("Model %s not found, skipping.", model)
+                    break
 
-                if "429" in err or "quota" in err:
-
-                    time.sleep(
-                        2*(attempt+1)
-                    )
-                    continue
-
+                if "429" in err or "quota" in err or "resource_exhausted" in err:
+                    # Only retry once with short sleep; then try next model
+                    if attempt == 0:
+                        time.sleep(2)
+                        continue
+                    # Second 429 — give up on this model, try next
+                    logger.warning("Model %s rate-limited twice, switching model.", model)
+                    break
 
                 break
 
@@ -682,12 +685,17 @@ def generate_reply_stream(
 
                 err=str(e).lower()
 
-                if "429" in err or "quota" in err:
+                # 404 = model does not exist → skip immediately
+                if "404" in err or "not found" in err:
+                    logger.warning("Stream: model %s not found, skipping.", model)
+                    break
 
-                    time.sleep(
-                        2*(attempt+1)
-                    )
-                    continue
+                if "429" in err or "quota" in err or "resource_exhausted" in err:
+                    if attempt == 0:
+                        time.sleep(2)
+                        continue
+                    logger.warning("Stream: model %s rate-limited twice, switching.", model)
+                    break
 
                 break
 

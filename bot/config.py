@@ -74,12 +74,15 @@ def _get_fallback_models() -> list[str]:
         models = [m.strip() for m in raw.split(",") if m.strip()]
         if models:
             return models
-    # Default fallback zənciri (free tier-də mövcud modellər, 2026)
+    # Default fallback zənciri (free tier-də mövcud və işləyən modellər, 2026)
+    # Qeyd: gemini-3.5-flash, gemini-3-flash — ya 404 ya da ağır rate limit verir.
+    # Aşağıdakı sıra ən etibarlıdan ən az etibarlıya doğrudur.
     return [
-        "gemini-3.5-flash",
-        "gemini-3-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",   # ən sürətli, az rate limit
+        "gemini-2.5-flash",        # güclü, orta rate limit
+        "gemini-2.0-flash",        # köhnə amma sabit
+        "gemini-2.0-flash-lite",   # yedək
+        "gemini-1.5-flash",        # ən köhnə, amma həmişə işləyir
     ]
 
 
@@ -91,7 +94,7 @@ class Settings:
     # ── Gemini ─────────────────────────────────────────────────────────────
     # Köhnə tək key (geriyə uyğunluq üçün)
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
     # Çoxlu key və fallback model dəstəyi
     gemini_api_keys: list[str] = field(default_factory=_get_api_keys)
