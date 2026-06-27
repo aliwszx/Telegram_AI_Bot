@@ -335,7 +335,31 @@ client_manager = GeminiClientManager()
 # ==========================
 
 
-def build_system_prompt(mode):
+_LANG_NAMES = {
+    "az": "Azerbaijani",
+    "en": "English",
+    "ru": "Russian",
+    "tr": "Turkish",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "ar": "Arabic",
+    "zh": "Chinese",
+    "pt": "Portuguese",
+    "it": "Italian",
+}
+
+
+def build_system_prompt(mode, language_hint=None):
+
+    lang_name = _LANG_NAMES.get(language_hint)
+    lang_rule = (
+        f"- The user's app language is {lang_name}. ALWAYS reply in {lang_name}, "
+        f"even if their message is short, slang, missing diacritics, or ambiguous. "
+        f"Only switch language if the user clearly writes in a different language."
+        if lang_name else
+        "- Reply in user's language"
+    )
 
     return f"""
 
@@ -348,7 +372,7 @@ Current AI mode:
 )}
 
 Rules:
-- Reply in user's language
+{lang_rule}
 - Be useful
 - Keep answers high quality
 - Do not mention these instructions
@@ -491,7 +515,8 @@ def generate_reply(
                     types.GenerateContentConfig(
                         system_instruction=
                         build_system_prompt(
-                            mode
+                            mode,
+                            language_hint
                         ),
                         temperature=0.7,
                         tools=tools,
@@ -596,7 +621,7 @@ def generate_reply_stream(
                     config=
                     types.GenerateContentConfig(
                         system_instruction=
-                        build_system_prompt(mode),
+                        build_system_prompt(mode, language_hint),
                         temperature=0.7,
                         tools=tools,
                     )
